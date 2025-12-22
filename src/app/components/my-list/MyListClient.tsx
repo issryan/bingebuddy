@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { getRankedShows, getState } from "@/core/logic/state";
 
 type WantToWatchItem = { id: string; title: string };
@@ -23,6 +24,7 @@ function safeGetWantToWatch(): WantToWatchItem[] {
 }
 
 export default function MyListClient() {
+  const router = useRouter();
   const [ranked, setRanked] = useState(() => getRankedShows(getState()));
   const [wantToWatch, setWantToWatch] = useState<WantToWatchItem[]>([]);
 
@@ -71,9 +73,22 @@ export default function MyListClient() {
             {wantToWatch.map((item) => (
               <li
                 key={item.id}
-                className="rounded-xl bg-white/5 border border-white/10 px-4 py-3"
+                className="flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-3"
               >
                 <span className="font-medium">{item.title}</span>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const params = new URLSearchParams();
+                    params.set("title", item.title);
+                    params.set("auto", "1");
+                    router.push(`/log?${params.toString()}`);
+                  }}
+                  className="shrink-0 rounded-xl bg-white text-black font-medium px-3 py-2 text-sm"
+                >
+                  Rank
+                </button>
               </li>
             ))}
           </ul>
