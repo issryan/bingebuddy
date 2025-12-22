@@ -214,3 +214,30 @@ export function applyComparisonAnswer(
 
   return { newShow, low, high, compareIndex };
 }
+
+/**
+ * Sprint 3: manual reorder (Ranked list only)
+ * Reorders the stored `shows` array by moving an item from one index to another.
+ * Ratings are derived later from order, so we do NOT store ratings here.
+ */
+export function reorderShows(fromIndex: number, toIndex: number): AppState {
+  const state = getState();
+
+  if (
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= state.shows.length ||
+    toIndex >= state.shows.length ||
+    fromIndex === toIndex
+  ) {
+    return state;
+  }
+
+  const next = [...state.shows];
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved);
+
+  const nextState: AppState = { shows: next };
+  setState(nextState);
+  return nextState;
+}

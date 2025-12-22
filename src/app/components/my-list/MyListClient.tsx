@@ -1,9 +1,9 @@
-// src/components/my-list/MyListClient.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getRankedShows, getState } from "@/core/logic/state";
+import { getRankedShows, getState, reorderShows } from "@/core/logic/state";
+import RankedDragList from "./RankedDragList";
 
 type WantToWatchItem = { id: string; title: string };
 
@@ -27,6 +27,7 @@ export default function MyListClient() {
   const router = useRouter();
   const [ranked, setRanked] = useState(() => getRankedShows(getState()));
   const [wantToWatch, setWantToWatch] = useState<WantToWatchItem[]>([]);
+  const [isReorderMode, setIsReorderMode] = useState(false);
 
   useEffect(() => {
     setRanked(getRankedShows(getState()));
@@ -37,10 +38,37 @@ export default function MyListClient() {
     <div className="space-y-6">
       {/* Ranked / Watched */}
       <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-        <h2 className="text-lg font-semibold">Ranked</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Ranked</h2>
+
+          {ranked.length > 1 ? (
+            <button
+              type="button"
+              onClick={() => setIsReorderMode((v) => !v)}
+              className={
+                isReorderMode
+                  ? "rounded-xl bg-white text-black font-medium px-3 py-2 text-sm"
+                  : "rounded-xl bg-white/10 border border-white/15 font-medium px-3 py-2 text-sm"
+              }
+            >
+              {isReorderMode ? "Done" : "Reorder"}
+            </button>
+          ) : null}
+        </div>
 
         {ranked.length === 0 ? (
           <p className="mt-3 text-white/60">No ranked shows yet.</p>
+        ) : isReorderMode ? (
+          <>
+            <div className="mt-3 text-sm text-white/60">Drag shows to reorder.</div>
+            <RankedDragList
+              ranked={ranked}
+              onCommitReorder={(from, to) => {
+                reorderShows(from, to);
+                setRanked(getRankedShows(getState()));
+              }}
+            />
+          </>
         ) : (
           <ol className="mt-4 space-y-2">
             {ranked.map((s, i) => (
