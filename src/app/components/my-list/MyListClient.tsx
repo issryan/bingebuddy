@@ -25,6 +25,7 @@ function safeGetWantToWatch(): WantToWatchItem[] {
 
 export default function MyListClient() {
   const router = useRouter();
+
   const [ranked, setRanked] = useState(() => getRankedShows(getState()));
   const [wantToWatch, setWantToWatch] = useState<WantToWatchItem[]>([]);
   const [isReorderMode, setIsReorderMode] = useState(false);
