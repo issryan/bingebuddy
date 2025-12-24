@@ -9,6 +9,13 @@ type WantToWatchItem = { id: string; title: string };
 
 const WANT_TO_WATCH_KEY = "bingebuddy.wantToWatch";
 
+
+function ratingBadgeClass(rating: number): string {
+  if (rating >= 7) return "border-green-400/40 text-green-300";
+  if (rating >= 4) return "border-yellow-400/40 text-yellow-300";
+  return "border-red-400/40 text-red-300";
+}
+
 function safeGetWantToWatch(): WantToWatchItem[] {
   try {
     const raw = localStorage.getItem(WANT_TO_WATCH_KEY);
@@ -82,8 +89,15 @@ export default function MyListClient() {
                   <span className="font-medium truncate">{s.title}</span>
                 </div>
 
-                <div className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-sm text-white/80">
-                  Rating: {s.rating}
+                <div
+                  className={
+                    "shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-full border bg-white/5 text-sm font-semibold " +
+                    ratingBadgeClass(s.rating)
+                  }
+                  aria-label={`Rating ${s.rating}`}
+                  title={`Rating ${s.rating}`}
+                >
+                  {Number(s.rating).toFixed(1)}
                 </div>
               </li>
             ))}

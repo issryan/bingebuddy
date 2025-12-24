@@ -21,6 +21,12 @@ import { CSS } from "@dnd-kit/utilities";
 import type { RankedShow } from "@/core/types/show";
 import { useMemo, useState } from "react";
 
+function ratingBadgeClass(rating: number): string {
+  if (rating >= 7) return "border-green-400/40 text-green-300";
+  if (rating >= 4) return "border-yellow-400/40 text-yellow-300";
+  return "border-red-400/40 text-red-300";
+}
+
 function SortableRow({
   show,
   index,
@@ -63,8 +69,15 @@ function SortableRow({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
-        <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-sm text-white/80">
-          Rating: {show.rating}
+        <div
+          className={
+            "inline-flex items-center justify-center w-11 h-11 rounded-full border bg-white/5 text-sm font-semibold " +
+            ratingBadgeClass(show.rating)
+          }
+          aria-label={`Rating ${show.rating}`}
+          title={`Rating ${show.rating}`}
+        >
+          {Number(show.rating).toFixed(1)}
         </div>
 
         {/* Drag handle */}
@@ -153,10 +166,39 @@ export default function RankedDragList({
 
       <DragOverlay>
         {activeShow ? (
-          <div className="rounded-xl border border-white/25 bg-black px-4 py-3 shadow-lg">
-            <div className="text-sm text-white/60">Moving</div>
-            <div className="mt-1 text-lg font-semibold text-white">
-              {activeShow.title}
+          <div
+            className={[
+              "flex items-center justify-between gap-3 rounded-xl border px-4 py-3",
+              "bg-white/5 border-white/30",
+              "shadow-lg",
+            ].join(" ")}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-white/60 shrink-0">#{ids.indexOf(activeShow.id) + 1}</span>
+              <span className="font-medium truncate text-white">{activeShow.title}</span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <div
+                className={
+                  "inline-flex items-center justify-center w-11 h-11 rounded-full border bg-white/5 text-sm font-semibold " +
+                  ratingBadgeClass(activeShow.rating)
+                }
+                aria-label={`Rating ${activeShow.rating}`}
+                title={`Rating ${activeShow.rating}`}
+              >
+                {Number(activeShow.rating).toFixed(1)}
+              </div>
+
+              <div
+                className={[
+                  "rounded-lg border border-white/10 bg-white/5 px-2 py-2 text-white/70",
+                  "opacity-70",
+                ].join(" ")}
+                aria-hidden="true"
+              >
+                ≡
+              </div>
             </div>
           </div>
         ) : null}

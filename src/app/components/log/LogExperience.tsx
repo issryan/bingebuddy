@@ -317,9 +317,15 @@ export default function LogExperience() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-5 space-y-4">
-        <label className="block text-sm text-white/70">
-          Show title
+      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-6 space-y-5">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Log</h2>
+          <p className="text-sm text-white/60">
+            Add a show you’ve watched, or save one for later.
+          </p>
+        </div>
+        <label className="block text-sm text-white/60">
+          <span className="font-medium text-white/80">Show title</span>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -340,7 +346,7 @@ export default function LogExperience() {
 
             <button
               onClick={handleAddToWantToWatch}
-              className="w-full rounded-xl bg-white/10 border border-white/15 font-medium px-4 py-3"
+              className="w-full rounded-xl bg-white/5 border border-white/10 font-medium px-4 py-3 text-white/90 hover:bg-white/10"
             >
               Add to Want to Watch
             </button>
@@ -357,7 +363,7 @@ export default function LogExperience() {
                     onClick={handleUndo}
                     disabled={undoStack.length === 0}
                     title={undoStack.length === 0 ? "Nothing to undo yet" : "Undo last step"}
-                    className="rounded-xl bg-white/10 border border-white/15 font-medium px-3 py-2 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="rounded-xl bg-white/5 border border-white/10 font-medium px-3 py-2 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     Undo
                   </button>
@@ -365,7 +371,7 @@ export default function LogExperience() {
                   <button
                     type="button"
                     onClick={handleSkip}
-                    className="rounded-xl bg-white/10 border border-white/15 font-medium px-3 py-2 text-sm"
+                    className="rounded-xl bg-white/5 border border-white/10 font-medium px-3 py-2 text-sm text-white/80 hover:bg-white/10"
                   >
                     Skip
                   </button>
@@ -398,8 +404,7 @@ export default function LogExperience() {
             </div>
 
             <p className="text-sm text-white/60">
-              We may ask a few quick comparisons to place it correctly. You can Undo or Skip if
-              you’re unsure.
+              We’ll ask a few quick comparisons to place it correctly. Use Undo or Skip if you’re unsure.
             </p>
           </>
         )}
