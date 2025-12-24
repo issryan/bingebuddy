@@ -73,6 +73,7 @@ export default function LogExperience() {
   const [ranked, setRanked] = useState(() => getRankedShows(getState()));
 
   const [isWorking, setIsWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function refreshRanked() {
     setRanked(getRankedShows(getState()));
@@ -112,16 +113,32 @@ export default function LogExperience() {
 
   function handleAddToWantToWatch() {
     const clean = title.trim();
-    if (!clean) return;
+    if (!clean) {
+      setError("Enter a show title to save it.");
+      return;
+    }
+
+    // If it's already ranked, don't allow adding to Want to Watch.
+    const alreadyRanked = ranked.some(
+      (s) => s.title.trim().toLowerCase() === clean.toLowerCase()
+    );
+
+    if (alreadyRanked) {
+      setError("That show is already ranked — no need to save it.");
+      return;
+    }
 
     const current = safeGetWantToWatch();
     const exists = current.some(
       (x) => x.title.trim().toLowerCase() === clean.toLowerCase()
     );
 
-    if (!exists) {
-      safeSetWantToWatch([...current, { id: makeId(), title: clean }]);
+    if (exists) {
+      setError("That show is already in your Want to Watch list.");
+      return;
     }
+
+    safeSetWantToWatch([...current, { id: makeId(), title: clean }]);
 
     setTitle("");
     setSession(null);
@@ -131,7 +148,10 @@ export default function LogExperience() {
   }
 
   function startWithTitle(clean: string) {
-    if (!clean) return;
+    if (!clean) {
+      setError("Enter a show title to continue.");
+      return;
+    }
 
     // Prevent ranking duplicates
     const alreadyRanked = ranked.some(
@@ -139,12 +159,7 @@ export default function LogExperience() {
     );
 
     if (alreadyRanked) {
-      removeFromWantToWatchByTitle(clean);
-      setTitle("");
-      setSession(null);
-      setUndoStack([]);
-      setSkippedCompareIndexes([]);
-      router.push("/my-list");
+      setError("That show is already ranked.");
       return;
     }
 
@@ -340,18 +355,26 @@ export default function LogExperience() {
           <span className="font-medium text-white/80">Show title</span>
           <input
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              setTitle(e.target.value);
+              if (error) setError(null);
+            }}
             placeholder="e.g., The Boys"
             disabled={isComparing}
             className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-base outline-none focus:border-white/30 disabled:opacity-60 disabled:cursor-not-allowed"
           />
         </label>
+        {error ? (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-300">
+            {error}
+          </div>
+        ) : null}
 
         {!isComparing ? (
           <div className="space-y-3">
             <button
               onClick={handleStart}
-              disabled={isWorking}
+              disabled={isWorking || !!error}
               className="w-full rounded-xl bg-white text-black font-medium px-4 py-3"
             >
               {hasShows ? "Start comparison" : "Add first show"}
@@ -359,7 +382,7 @@ export default function LogExperience() {
 
             <button
               onClick={handleAddToWantToWatch}
-              disabled={isWorking}
+              disabled={isWorking || !!error}
               className="w-full rounded-xl bg-white/5 border border-white/10 font-medium px-4 py-3 text-white/90 hover:bg-white/10"
             >
               Add to Want to Watch
