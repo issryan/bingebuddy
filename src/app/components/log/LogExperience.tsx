@@ -72,6 +72,8 @@ export default function LogExperience() {
 
   const [ranked, setRanked] = useState(() => getRankedShows(getState()));
 
+  const [isWorking, setIsWorking] = useState(false);
+
   function refreshRanked() {
     setRanked(getRankedShows(getState()));
   }
@@ -174,6 +176,7 @@ export default function LogExperience() {
     // Save for undo (including skipped memory)
     setUndoStack((prev) => [...prev, { session, skipped: skippedCompareIndexes }]);
 
+    setIsWorking(true);
     const next = applyComparisonAnswer(session, preference);
 
     if (next === null) {
@@ -183,8 +186,10 @@ export default function LogExperience() {
       setSkippedCompareIndexes([]);
       setTitle("");
       goToSavedScreen(savedTitle);
+      setIsWorking(false);
     } else {
       setSession(next);
+      setIsWorking(false);
     }
   }
 
@@ -203,6 +208,8 @@ export default function LogExperience() {
 
     // Save for undo
     setUndoStack((prev) => [...prev, { session, skipped: skippedCompareIndexes }]);
+
+    setIsWorking(true);
 
     const { low, high, compareIndex } = session;
     const windowSize = high - low;
@@ -232,12 +239,14 @@ export default function LogExperience() {
         setSkippedCompareIndexes([]);
         setTitle("");
         goToSavedScreen(savedTitle);
+        setIsWorking(false);
+        return;
       } else {
         setSkippedCompareIndexes(nextSkipped);
         setSession(done);
+        setIsWorking(false);
+        return;
       }
-
-      return;
     }
 
     // Try to find a NEW compareIndex within [low, high) not yet skipped
@@ -263,6 +272,7 @@ export default function LogExperience() {
       if (nextIndex !== null) {
         setSkippedCompareIndexes(nextSkipped);
         setSession({ ...session, compareIndex: nextIndex });
+        setIsWorking(false);
         return;
       }
     }
@@ -288,10 +298,12 @@ export default function LogExperience() {
       setSkippedCompareIndexes([]);
       setTitle("");
       goToSavedScreen(savedTitle);
+      setIsWorking(false);
     } else {
       // Should be rare, but keep safe
       setSkippedCompareIndexes(nextSkipped);
       setSession(done);
+      setIsWorking(false);
     }
   }
 
@@ -339,6 +351,7 @@ export default function LogExperience() {
           <div className="space-y-3">
             <button
               onClick={handleStart}
+              disabled={isWorking}
               className="w-full rounded-xl bg-white text-black font-medium px-4 py-3"
             >
               {hasShows ? "Start comparison" : "Add first show"}
@@ -346,6 +359,7 @@ export default function LogExperience() {
 
             <button
               onClick={handleAddToWantToWatch}
+              disabled={isWorking}
               className="w-full rounded-xl bg-white/5 border border-white/10 font-medium px-4 py-3 text-white/90 hover:bg-white/10"
             >
               Add to Want to Watch
@@ -355,13 +369,15 @@ export default function LogExperience() {
           <>
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm text-white/70">Which did you like more?</div>
+                <div className="text-sm text-white/70">
+                  {isWorking ? "Placing…" : "Which did you like more?"}
+                </div>
 
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={handleUndo}
-                    disabled={undoStack.length === 0}
+                    disabled={undoStack.length === 0 || isWorking}
                     title={undoStack.length === 0 ? "Nothing to undo yet" : "Undo last step"}
                     className="rounded-xl bg-white/5 border border-white/10 font-medium px-3 py-2 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
@@ -371,6 +387,7 @@ export default function LogExperience() {
                   <button
                     type="button"
                     onClick={handleSkip}
+                    disabled={isWorking}
                     className="rounded-xl bg-white/5 border border-white/10 font-medium px-3 py-2 text-sm text-white/80 hover:bg-white/10"
                   >
                     Skip
@@ -378,10 +395,14 @@ export default function LogExperience() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className={
+                "grid grid-cols-1 sm:grid-cols-2 gap-3 transition-opacity " +
+                (isWorking ? "opacity-60 pointer-events-none" : "")
+              }>
                 <button
                   type="button"
                   onClick={() => handleAnswer("new")}
+                  disabled={isWorking}
                   className="group rounded-2xl border border-white/15 bg-white/5 px-5 py-7 text-left hover:bg-white/10 hover:border-white/25 focus:outline-none focus:ring-2 focus:ring-white/30 active:scale-[0.99]"
                   aria-label={`Choose ${title.trim()}`}
                 >
@@ -393,6 +414,7 @@ export default function LogExperience() {
                 <button
                   type="button"
                   onClick={() => handleAnswer("existing")}
+                  disabled={isWorking}
                   className="group rounded-2xl border border-white/15 bg-white/5 px-5 py-7 text-left hover:bg-white/10 hover:border-white/25 focus:outline-none focus:ring-2 focus:ring-white/30 active:scale-[0.99]"
                   aria-label={`Choose ${comparisonShow?.title ?? "existing show"}`}
                 >

@@ -1,6 +1,20 @@
 "use client";
 
+
 import { useRouter, useSearchParams } from "next/navigation";
+
+function ratingBadgeClass(rating: number): string {
+  if (rating >= 7) return "border-green-600/40 text-green-700";
+  if (rating >= 4) return "border-yellow-600/40 text-yellow-700";
+  return "border-red-600/40 text-red-700";
+}
+
+function formatRating(rating: string | null): string | null {
+  if (!rating) return null;
+  const n = Number(rating);
+  if (Number.isNaN(n)) return null;
+  return n.toFixed(1);
+}
 
 export default function SavedPage() {
   const router = useRouter();
@@ -8,7 +22,9 @@ export default function SavedPage() {
 
   const title = params.get("title") ?? "Your show";
   const rank = params.get("rank");
-  const rating = params.get("rating");
+  const ratingRaw = params.get("rating");
+  const rating = formatRating(ratingRaw);
+  const ratingNumber = rating ? Number(rating) : null;
 
   return (
     <div className="min-h-[70vh] flex items-center justify-center">
@@ -53,8 +69,15 @@ export default function SavedPage() {
             </div>
 
             {/* Rating circle */}
-            {rating ? (
-              <div className="shrink-0 rounded-full border border-black/15 px-4 py-3 text-lg font-semibold">
+            {rating && ratingNumber !== null ? (
+              <div
+                className={
+                  "shrink-0 inline-flex items-center justify-center w-14 h-14 rounded-full border bg-black/5 text-lg font-semibold " +
+                  ratingBadgeClass(ratingNumber)
+                }
+                aria-label={`Rating ${rating}`}
+                title={`Rating ${rating}`}
+              >
                 {rating}
               </div>
             ) : null}
