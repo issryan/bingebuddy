@@ -7,7 +7,20 @@ import RankedDragList from "./RankedDragList";
 
 type WantToWatchItem = { id: string; title: string };
 
+
 const WANT_TO_WATCH_KEY = "bingebuddy.wantToWatch";
+
+const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
+
+function posterUrl(path: string | null | undefined, size: "w92" | "w154" = "w92"): string | null {
+  if (!path) return null;
+  return `${TMDB_IMG_BASE}/${size}${path}`;
+}
+
+function genresLabel(genres: string[] | undefined): string {
+  if (!genres || genres.length === 0) return "";
+  return genres.slice(0, 2).join(" • ");
+}
 
 function ratingBadgeClass(rating: number): string {
   if (rating >= 7) return "border-green-400/40 text-green-300";
@@ -123,28 +136,63 @@ export default function MyListClient() {
               </>
             ) : (
               <ol className="mt-4 space-y-2">
-                {ranked.map((s, i) => (
-                  <li
-                    key={s.id}
-                    className="flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-3"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="text-white/60 shrink-0">#{i + 1}</span>
-                      <span className="font-medium truncate">{s.title}</span>
-                    </div>
+                {ranked.map((s, i) => {
+                  const img = posterUrl(s.posterPath, "w92");
+                  const metaLine = [s.year ? s.year : "", genresLabel(s.genres)].filter(Boolean).join(" • ");
+                  const canOpen = typeof s.tmdbId === "number" && s.tmdbId > 0;
 
-                    <div
-                      className={
-                        "shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-full border bg-white/5 text-sm font-semibold " +
-                        ratingBadgeClass(s.rating)
-                      }
-                      aria-label={`Rating ${s.rating}`}
-                      title={`Rating ${s.rating}`}
-                    >
-                      {Number(s.rating).toFixed(1)}
-                    </div>
-                  </li>
-                ))}
+                  return (
+                    <li key={s.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!canOpen) return;
+                          router.push(`/show/${s.tmdbId}`);
+                        }}
+                        className={
+                          "w-full flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-left " +
+                          (canOpen ? "hover:bg-white/10 hover:border-white/20" : "cursor-default")
+                        }
+                        aria-label={canOpen ? `Open details for ${s.title}` : undefined}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {/* Poster */}
+                          {img ? (
+                            <img
+                              src={img}
+                              alt=""
+                              className="w-10 h-14 rounded bg-white/10 object-cover shrink-0"
+                            />
+                          ) : (
+                            <div className="w-10 h-14 rounded bg-white/10 shrink-0" />
+                          )}
+
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-white/60 shrink-0">#{i + 1}</span>
+                              <span className="font-medium truncate">{s.title}</span>
+                            </div>
+
+                            {metaLine ? (
+                              <div className="mt-0.5 text-xs text-white/50 truncate">{metaLine}</div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div
+                          className={
+                            "shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-full border bg-white/5 text-sm font-semibold " +
+                            ratingBadgeClass(s.rating)
+                          }
+                          aria-label={`Rating ${s.rating}`}
+                          title={`Rating ${s.rating}`}
+                        >
+                          {Number(s.rating).toFixed(1)}
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
               </ol>
             )}
           </section>
@@ -166,7 +214,10 @@ export default function MyListClient() {
                     key={item.id}
                     className="flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-3"
                   >
-                    <span className="font-medium">{item.title}</span>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-14 rounded bg-white/10 shrink-0" />
+                      <span className="font-medium truncate">{item.title}</span>
+                    </div>
 
                     <button
                       type="button"
