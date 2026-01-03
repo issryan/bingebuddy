@@ -13,7 +13,14 @@ import {
 } from "@/core/logic/state";
 import Link from "next/link";
 
-type WantToWatchItem = { id: string; title: string };
+type WantToWatchItem = {
+  id: string;
+  title: string;
+  tmdbId: number | null;
+  posterPath: string | null;
+  year: string | null;
+  genres: string[];
+};
 
 const WANT_TO_WATCH_KEY = "bingebuddy.wantToWatch";
 const MAX_SKIPS_BEFORE_AUTOPLACE = 5;
@@ -24,9 +31,24 @@ function safeGetWantToWatch(): WantToWatchItem[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
+
     return parsed
       .filter((x) => x && typeof x.id === "string" && typeof x.title === "string")
-      .map((x) => ({ id: x.id, title: x.title }));
+      .map((x) => {
+        const tmdbId = typeof x.tmdbId === "number" ? x.tmdbId : null;
+        const posterPath = typeof x.posterPath === "string" ? x.posterPath : null;
+        const year = typeof x.year === "string" ? x.year : null;
+        const genres = Array.isArray(x.genres) ? x.genres.filter((g: unknown) => typeof g === "string") : [];
+
+        return {
+          id: x.id,
+          title: x.title,
+          tmdbId,
+          posterPath,
+          year,
+          genres,
+        };
+      });
   } catch {
     return [];
   }
@@ -46,6 +68,13 @@ function removeFromWantToWatchByTitle(title: string) {
 
   const current = safeGetWantToWatch();
   const next = current.filter((x) => x.title.trim().toLowerCase() !== clean);
+  safeSetWantToWatch(next);
+}
+
+function removeFromWantToWatchByTmdbId(tmdbId: number) {
+  if (!Number.isFinite(tmdbId)) return;
+  const current = safeGetWantToWatch();
+  const next = current.filter((x) => x.tmdbId !== tmdbId);
   safeSetWantToWatch(next);
 }
 
@@ -181,8 +210,16 @@ export default function LogExperience() {
       params.set("rating", String(nextRanked[index].rating));
     }
 
-    // Once ranked, remove from Want to Watch
-    removeFromWantToWatchByTitle(savedTitle);
+    // Once ranked, remove from Want to Watch (prefer tmdbId when available)
+    const match = nextRanked.find(
+      (s) => s.title.trim().toLowerCase() === savedTitle.trim().toLowerCase()
+    );
+
+    if (match && typeof match.tmdbId === "number") {
+      removeFromWantToWatchByTmdbId(match.tmdbId);
+    } else {
+      removeFromWantToWatchByTitle(savedTitle);
+    }
 
     // Clear metadata after save
     setSelectedMeta(null);
@@ -209,16 +246,28 @@ export default function LogExperience() {
     }
 
     const current = safeGetWantToWatch();
-    const exists = current.some(
-      (x) => x.title.trim().toLowerCase() === clean.toLowerCase()
-    );
+
+    const selectedId = typeof selectedTmdbId === "number" ? selectedTmdbId : null;
+
+    const exists = selectedId
+      ? current.some((x) => x.tmdbId === selectedId)
+      : current.some((x) => x.title.trim().toLowerCase() === clean.toLowerCase());
 
     if (exists) {
       setError("That show is already in your Want to Watch list.");
       return;
     }
 
-    safeSetWantToWatch([...current, { id: makeId(), title: clean }]);
+    const item: WantToWatchItem = {
+      id: makeId(),
+      title: clean,
+      tmdbId: selectedMeta?.tmdbId ?? selectedId,
+      posterPath: selectedMeta?.posterPath ?? null,
+      year: selectedMeta?.year ?? null,
+      genres: selectedMeta?.genres ?? [],
+    };
+
+    safeSetWantToWatch([...current, item]);
 
     // Clear metadata when adding to Want To Watch
     setSelectedMeta(null);
@@ -462,20 +511,58 @@ export default function LogExperience() {
     }
   }
 
-  // Prefill + auto-start from /log?title=...&auto=1
+  // Prefill + auto-start from:
+  // - /log?title=...&auto=1
+  // - /log?tmdbId=...&auto=1
   useEffect(() => {
-    const prefill = searchParams.get("title");
+    const prefillTitle = searchParams.get("title");
+    const prefillTmdbIdRaw = searchParams.get("tmdbId");
     const auto = searchParams.get("auto") === "1";
 
-    if (!prefill) return;
+    // Only run when we're idle and input is empty
+    if (session !== null) return;
+    if (title.trim() !== "") return;
 
-    if (session === null && title.trim() === "") {
-      setTitle(prefill);
+    async function run() {
+      // If tmdbId exists, fetch details and prefill everything
+      if (prefillTmdbIdRaw) {
+        const id = Number(prefillTmdbIdRaw);
+        if (Number.isFinite(id)) {
+          try {
+            const res = await fetch(`/api/tmdb/details?id=${id}`);
+            if (res.ok) {
+              const details = await res.json();
+              setSelectedTmdbId(details.tmdbId);
+              setSelectedMeta({
+                tmdbId: details.tmdbId,
+                posterPath: details.posterPath ?? null,
+                year: details.year ?? null,
+                overview: details.overview ?? "",
+                genres: details.genres ?? [],
+              });
+              setTitle(details.title);
 
-      if (auto) {
-        void startWithTitle(prefill.trim());
+              if (auto) {
+                void startWithTitle(String(details.title).trim());
+              }
+              return;
+            }
+          } catch {
+            // fall through
+          }
+        }
+      }
+
+      // Fallback: title-only prefill
+      if (prefillTitle) {
+        setTitle(prefillTitle);
+        if (auto) {
+          void startWithTitle(prefillTitle.trim());
+        }
       }
     }
+
+    void run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, session, ranked.length]);
 
@@ -497,6 +584,8 @@ export default function LogExperience() {
             value={title}
             onChange={(e) => {
               setTitle(e.target.value);
+              setSelectedTmdbId(null);
+              setSelectedMeta(null);
               if (error) setError(null);
             }}
             placeholder="e.g., The Boys"

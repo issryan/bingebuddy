@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 import { getRankedShows, getState, reorderShows } from "@/core/logic/state";
 import RankedDragList from "./RankedDragList";
 
-type WantToWatchItem = { id: string; title: string };
+type WantToWatchItem = {
+  id: string;
+  title: string;
+  tmdbId: number | null;
+  posterPath: string | null;
+  year: string | null;
+  genres: string[];
+};
 
 
 const WANT_TO_WATCH_KEY = "bingebuddy.wantToWatch";
@@ -34,9 +41,26 @@ function safeGetWantToWatch(): WantToWatchItem[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
+
     return parsed
       .filter((x) => x && typeof x.id === "string" && typeof x.title === "string")
-      .map((x) => ({ id: x.id, title: x.title }));
+      .map((x) => {
+        const tmdbId = typeof (x as any).tmdbId === "number" ? (x as any).tmdbId : null;
+        const posterPath = typeof (x as any).posterPath === "string" ? (x as any).posterPath : null;
+        const year = typeof (x as any).year === "string" ? (x as any).year : null;
+        const genres = Array.isArray((x as any).genres)
+          ? (x as any).genres.filter((g: unknown) => typeof g === "string")
+          : [];
+
+        return {
+          id: (x as any).id,
+          title: (x as any).title,
+          tmdbId,
+          posterPath,
+          year,
+          genres,
+        };
+      });
   } catch {
     return [];
   }
@@ -214,23 +238,67 @@ export default function MyListClient() {
                     key={item.id}
                     className="flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-3"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-14 rounded bg-white/10 shrink-0" />
-                      <span className="font-medium truncate">{item.title}</span>
-                    </div>
+                    {(() => {
+                      const img = posterUrl(item.posterPath, "w92");
+                      const metaLine = [
+                        item.year ? item.year : "",
+                        genresLabel(item.genres),
+                      ]
+                        .filter(Boolean)
+                        .join(" • ");
+                      const canOpen = typeof item.tmdbId === "number" && item.tmdbId > 0;
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const params = new URLSearchParams();
-                        params.set("title", item.title);
-                        params.set("auto", "1");
-                        router.push(`/log?${params.toString()}`);
-                      }}
-                      className="shrink-0 rounded-xl bg-white text-black font-medium px-3 py-2 text-sm"
-                    >
-                      Rank
-                    </button>
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!canOpen) return;
+                              router.push(`/show/${item.tmdbId}`);
+                            }}
+                            className={
+                              "flex items-center gap-3 min-w-0 text-left " +
+                              (canOpen ? "hover:opacity-90" : "cursor-default")
+                            }
+                            aria-label={canOpen ? `Open details for ${item.title}` : undefined}
+                          >
+                            {img ? (
+                              <img
+                                src={img}
+                                alt=""
+                                className="w-10 h-14 rounded bg-white/10 object-cover shrink-0"
+                              />
+                            ) : (
+                              <div className="w-10 h-14 rounded bg-white/10 shrink-0" />
+                            )}
+
+                            <div className="min-w-0">
+                              <div className="font-medium truncate">{item.title}</div>
+                              {metaLine ? (
+                                <div className="mt-0.5 text-xs text-white/50 truncate">{metaLine}</div>
+                              ) : null}
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const params = new URLSearchParams();
+                              if (item.tmdbId) {
+                                params.set("tmdbId", String(item.tmdbId));
+                              } else {
+                                params.set("title", item.title);
+                              }
+                              params.set("auto", "1");
+                              router.push(`/log?${params.toString()}`);
+                            }}
+                            className="shrink-0 rounded-xl bg-white text-black font-medium px-3 py-2 text-sm"
+                          >
+                            Rank
+                          </button>
+                        </>
+                      );
+                    })()}
                   </li>
                 ))}
               </ul>
