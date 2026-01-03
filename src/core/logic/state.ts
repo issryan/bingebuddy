@@ -32,10 +32,19 @@ function titleExists(state: AppState, title: string): boolean {
 
 /**
  * Create a brand-new Show object.
- * IMPORTANT: In our comparison model, we do NOT store rating on the show.
- * The list order is the truth; ratings are derived later.
+ * - Ranking truth is still the list order (NOT rating)
+ * - TMDB metadata is optional and can be filled later
  */
-export function createShow(title: string): Show {
+export function createShow(
+  title: string,
+  opts?: {
+    tmdbId?: number | null;
+    posterPath?: string | null;
+    year?: string | null;
+    overview?: string;
+    genres?: string[];
+  }
+): Show {
   // Use crypto.randomUUID if available (modern browsers), otherwise fallback.
   const id =
     typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -44,8 +53,13 @@ export function createShow(title: string): Show {
 
   return {
     id,
+    tmdbId: opts?.tmdbId ?? null,
     title: title.trim(),
     createdAt: Date.now(),
+    posterPath: opts?.posterPath ?? null,
+    year: opts?.year ?? null,
+    overview: opts?.overview ?? "",
+    genres: opts?.genres ?? [],
   };
 }
 
@@ -69,7 +83,16 @@ export function setState(state: AppState): void {
  * Add the very first show.
  * If there are already shows, we DO NOT add here (comparison is required).
  */
-export function addFirstShow(title: string): AppState {
+export function addFirstShow(
+  title: string,
+  opts?: {
+    tmdbId?: number | null;
+    posterPath?: string | null;
+    year?: string | null;
+    overview?: string;
+    genres?: string[];
+  }
+): AppState {
   const state = getState();
 
   // Guard: don't allow duplicates (case-insensitive)
@@ -79,7 +102,7 @@ export function addFirstShow(title: string): AppState {
   // The UI should send the user into the comparison flow instead.
   if (state.shows.length > 0) return state;
 
-  const newShow = createShow(title);
+  const newShow = createShow(title, opts);
 
   const next: AppState = {
     shows: [newShow], // first show is automatically #1
@@ -110,14 +133,21 @@ export function getDefaultComparisonShowId(state: AppState): string | null {
 export function addShowByComparison(
   title: string,
   comparisonShowId: string,
-  preference: Preference
+  preference: Preference,
+  opts?: {
+    tmdbId?: number | null;
+    posterPath?: string | null;
+    year?: string | null;
+    overview?: string;
+    genres?: string[];
+  }
 ): AppState {
   const state = getState();
 
   // Guard: don't allow duplicates (case-insensitive)
   if (titleExists(state, title)) return state;
 
-  const newShow = createShow(title);
+  const newShow = createShow(title, opts);
 
   const ordered = insertByComparison(
     state.shows,
@@ -145,7 +175,16 @@ export function getRankedShows(state: AppState): RankedShow[] {
  * Start a comparison session for inserting a new show.
  * The app chooses the first comparison target automatically (middle of the list).
  */
-export function startComparisonSession(title: string): CompareSession | null {
+export function startComparisonSession(
+  title: string,
+  opts?: {
+    tmdbId?: number | null;
+    posterPath?: string | null;
+    year?: string | null;
+    overview?: string;
+    genres?: string[];
+  }
+): CompareSession | null {
   const state = getState();
 
   // Guard: don't allow duplicates (case-insensitive)
@@ -155,7 +194,7 @@ export function startComparisonSession(title: string): CompareSession | null {
   // The UI should call addFirstShow() instead.
   if (state.shows.length === 0) return null;
 
-  const newShow = createShow(title);
+  const newShow = createShow(title, opts);
 
   // We search for the insertion position between [0, shows.length]
   const low = 0;

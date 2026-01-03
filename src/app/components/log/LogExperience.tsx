@@ -76,6 +76,13 @@ export default function LogExperience() {
   const [searchResults, setSearchResults] = useState<TmdbSearchItem[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [selectedTmdbId, setSelectedTmdbId] = useState<number | null>(null);
+  const [selectedMeta, setSelectedMeta] = useState<{
+    tmdbId: number;
+    posterPath: string | null;
+    year: string | null;
+    overview: string;
+    genres: string[];
+  } | null>(null);
   const [session, setSession] = useState<CompareSession | null>(null);
 
   // Undo is only within the current session (in-memory)
@@ -125,11 +132,31 @@ export default function LogExperience() {
     };
   }, [title, session]);
 
-  function handleSelectResult(item: TmdbSearchItem) {
-    setTitle(item.title);
-    setSelectedTmdbId(item.tmdbId);
-    setSearchResults([]);
-    setError(null);
+  async function handleSelectResult(item: TmdbSearchItem) {
+    try {
+      const res = await fetch(`/api/tmdb/details?id=${item.tmdbId}`);
+      if (!res.ok) throw new Error("Failed to load details");
+      const details = await res.json();
+
+      setSelectedMeta({
+        tmdbId: details.tmdbId,
+        posterPath: details.posterPath ?? null,
+        year: details.year ?? null,
+        overview: details.overview ?? "",
+        genres: details.genres ?? [],
+      });
+
+      setTitle(details.title);
+      setSelectedTmdbId(details.tmdbId);
+      setSearchResults([]);
+      setError(null);
+    } catch {
+      // fallback to title-only
+      setTitle(item.title);
+      setSelectedTmdbId(item.tmdbId);
+      setSearchResults([]);
+      setError(null);
+    }
   }
 
   const comparisonShow = useMemo(() => {
@@ -156,6 +183,10 @@ export default function LogExperience() {
 
     // Once ranked, remove from Want to Watch
     removeFromWantToWatchByTitle(savedTitle);
+
+    // Clear metadata after save
+    setSelectedMeta(null);
+    setSelectedTmdbId(null);
 
     router.push(`/saved?${params.toString()}`);
   }
@@ -189,6 +220,10 @@ export default function LogExperience() {
 
     safeSetWantToWatch([...current, { id: makeId(), title: clean }]);
 
+    // Clear metadata when adding to Want To Watch
+    setSelectedMeta(null);
+    setSelectedTmdbId(null);
+
     setTitle("");
     setSession(null);
     setUndoStack([]);
@@ -196,7 +231,61 @@ export default function LogExperience() {
     router.push("/my-list");
   }
 
-  function startWithTitle(clean: string) {
+  type MetaOpts = {
+    tmdbId?: number | null;
+    posterPath?: string | null;
+    year?: string | null;
+    overview?: string;
+    genres?: string[];
+  };
+
+  async function ensureMetaForStart(): Promise<MetaOpts | undefined> {
+    // If we already have meta for the current selection, use it.
+    if (selectedMeta && selectedTmdbId && selectedMeta.tmdbId === selectedTmdbId) {
+      return selectedMeta;
+    }
+
+    // No TMDB selection -> no metadata to fetch.
+    if (!selectedTmdbId) return undefined;
+
+    try {
+      setIsWorking(true);
+
+      const res = await fetch(`/api/tmdb/details?id=${selectedTmdbId}`);
+      if (!res.ok) return undefined;
+
+      const details = await res.json();
+
+      const meta: MetaOpts = {
+        tmdbId: details.tmdbId,
+        posterPath: details.posterPath ?? null,
+        year: details.year ?? null,
+        overview: details.overview ?? "",
+        genres: details.genres ?? [],
+      };
+
+      setSelectedMeta({
+        tmdbId: details.tmdbId,
+        posterPath: details.posterPath ?? null,
+        year: details.year ?? null,
+        overview: details.overview ?? "",
+        genres: details.genres ?? [],
+      });
+
+      // Canonical title from TMDB
+      if (typeof details.title === "string" && details.title.trim()) {
+        setTitle(details.title);
+      }
+
+      return meta;
+    } catch {
+      return undefined;
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
+  async function startWithTitle(clean: string) {
     if (!clean) {
       setError("Enter a show title to continue.");
       return;
@@ -212,8 +301,10 @@ export default function LogExperience() {
       return;
     }
 
+    const metaOpts = await ensureMetaForStart();
+
     if (ranked.length === 0) {
-      addFirstShow(clean);
+      addFirstShow(clean, metaOpts);
       setTitle("");
       setSession(null);
       setUndoStack([]);
@@ -222,7 +313,7 @@ export default function LogExperience() {
       return;
     }
 
-    const s = startComparisonSession(clean);
+    const s = startComparisonSession(clean, metaOpts);
     if (!s) return;
 
     setSession(s);
@@ -230,8 +321,8 @@ export default function LogExperience() {
     setSkippedCompareIndexes([]);
   }
 
-  function handleStart() {
-    startWithTitle(title.trim());
+  async function handleStart() {
+    await startWithTitle(title.trim());
   }
 
   function handleAnswer(preference: Preference) {
@@ -382,7 +473,7 @@ export default function LogExperience() {
       setTitle(prefill);
 
       if (auto) {
-        startWithTitle(prefill.trim());
+        void startWithTitle(prefill.trim());
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
