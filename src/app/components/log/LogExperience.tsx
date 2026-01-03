@@ -11,6 +11,7 @@ import {
   startComparisonSession,
   type CompareSession,
 } from "@/core/logic/state";
+import Link from "next/link";
 
 type WantToWatchItem = { id: string; title: string };
 
@@ -367,6 +368,17 @@ export default function LogExperience() {
         {error ? (
           <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-300">
             {error}
+
+            {error.toLowerCase().includes("already ranked") ? (
+              <div className="mt-2">
+                <Link
+                  href="/my-list"
+                  className="inline-flex items-center rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-xs font-medium text-white/80 hover:bg-white/10"
+                >
+                  View in My List →
+                </Link>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
