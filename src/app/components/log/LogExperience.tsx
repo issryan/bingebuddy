@@ -65,6 +65,17 @@ export default function LogExperience() {
   const searchParams = useSearchParams();
 
   const [title, setTitle] = useState("");
+  type TmdbSearchItem = {
+    tmdbId: number;
+    title: string;
+    year: string | null;
+    posterPath: string | null;
+    overview: string;
+  };
+
+  const [searchResults, setSearchResults] = useState<TmdbSearchItem[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedTmdbId, setSelectedTmdbId] = useState<number | null>(null);
   const [session, setSession] = useState<CompareSession | null>(null);
 
   // Undo is only within the current session (in-memory)
@@ -83,6 +94,43 @@ export default function LogExperience() {
   useEffect(() => {
     refreshRanked();
   }, []);
+
+  // Debounced TMDB search effect
+  useEffect(() => {
+    if (!title || title.trim().length < 2 || session) {
+      setSearchResults([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const t = setTimeout(async () => {
+      try {
+        setIsSearching(true);
+        const res = await fetch(`/api/tmdb/search?query=${encodeURIComponent(title.trim())}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        setSearchResults(json.results ?? []);
+      } catch {
+        // ignore
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
+  }, [title, session]);
+
+  function handleSelectResult(item: TmdbSearchItem) {
+    setTitle(item.title);
+    setSelectedTmdbId(item.tmdbId);
+    setSearchResults([]);
+    setError(null);
+  }
 
   const comparisonShow = useMemo(() => {
     if (!session) return null;
@@ -365,6 +413,40 @@ export default function LogExperience() {
             className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-base outline-none focus:border-white/30 disabled:opacity-60 disabled:cursor-not-allowed"
           />
         </label>
+        {searchResults.length > 0 ? (
+          <div className="rounded-xl border border-white/15 bg-black/80 backdrop-blur max-h-72 overflow-auto">
+            {searchResults.map((r) => (
+              <button
+                key={r.tmdbId}
+                type="button"
+                onClick={() => handleSelectResult(r)}
+                className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-white/10"
+              >
+                {r.posterPath ? (
+                  <img
+                    src={`https://image.tmdb.org/t/p/w92${r.posterPath}`}
+                    alt=""
+                    className="w-10 h-14 rounded bg-white/10 object-cover shrink-0"
+                  />
+                ) : (
+                  <div className="w-10 h-14 rounded bg-white/10 shrink-0" />
+                )}
+
+                <div className="min-w-0">
+                  <div className="font-medium text-white truncate">
+                    {r.title}{r.year ? ` (${r.year})` : ""}
+                  </div>
+                  <div className="text-xs text-white/50 line-clamp-2">
+                    {r.overview}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {isSearching ? (
+          <div className="text-xs text-white/50">Searching…</div>
+        ) : null}
         {error ? (
           <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-300">
             {error}
