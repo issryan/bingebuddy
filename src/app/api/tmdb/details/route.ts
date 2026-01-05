@@ -9,6 +9,12 @@ type TmdbTvDetails = {
   poster_path?: string | null;
   overview?: string;
   genres?: Array<{ id: number; name: string }>;
+  number_of_seasons?: number;
+  number_of_episodes?: number;
+};
+
+type TmdbTvCredits = {
+  cast?: Array<{ name: string }>;
 };
 
 export async function GET(req: Request) {
@@ -21,6 +27,7 @@ export async function GET(req: Request) {
   }
 
   const data = await tmdbFetch<TmdbTvDetails>(`/tv/${id}`);
+  const credits = await tmdbFetch<TmdbTvCredits>(`/tv/${id}/credits`);
 
   const payload = {
     tmdbId: data.id,
@@ -29,6 +36,10 @@ export async function GET(req: Request) {
     posterPath: data.poster_path ?? null,
     overview: data.overview ?? "",
     genres: (data.genres ?? []).map((g) => g.name),
+
+    seasons: typeof data.number_of_seasons === "number" ? data.number_of_seasons : null,
+    episodes: typeof data.number_of_episodes === "number" ? data.number_of_episodes : null,
+    cast: (credits.cast ?? []).slice(0, 10).map((c) => c.name),
   };
 
   return NextResponse.json(payload);
