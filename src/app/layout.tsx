@@ -81,6 +81,32 @@ function IconProfile({ active }: { active: boolean }) {
   );
 }
 
+function IconAccount({ active }: { active: boolean }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={active ? "text-white" : "text-white/50"}
+    >
+      <path
+        d="M12 2a5 5 0 100 10 5 5 0 000-10z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M4 22a8 8 0 0116 0"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function DesktopNavLink({
   href,
   label,
@@ -156,6 +182,7 @@ export default function RootLayout({
               <DesktopNavLink href="/log" label="Log" active={isActive("/log")} />
               <DesktopNavLink href="/my-list" label="My List" active={isActive("/my-list")} />
               <DesktopNavLink href="/profile" label="Profile" active={isActive("/profile")} />
+              <DesktopNavLink href="/login" label="Account" active={isActive("/login")} />
             </nav>
           </div>
         </header>
@@ -167,7 +194,7 @@ export default function RootLayout({
 
         {/* Mobile / bottom nav */}
         <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/90 backdrop-blur">
-          <div className="mx-auto w-full max-w-3xl px-4 py-3 grid grid-cols-3 gap-2">
+          <div className="mx-auto w-full max-w-3xl px-4 py-3 grid grid-cols-4 gap-2">
             <MobileNavItem
               href="/log"
               label="Log"
@@ -185,6 +212,12 @@ export default function RootLayout({
               label="Profile"
               active={isActive("/profile")}
               icon={<IconProfile active={isActive("/profile")} />}
+            />
+            <MobileNavItem
+              href="/login"
+              label="Account"
+              active={isActive("/login")}
+              icon={<IconAccount active={isActive("/login")} />}
             />
           </div>
         </nav>
