@@ -1,7 +1,9 @@
 "use client";
 import "./globals.css";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState, type ReactNode } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
 function IconLog({ active }: { active: boolean }) {
   return (
@@ -81,32 +83,6 @@ function IconProfile({ active }: { active: boolean }) {
   );
 }
 
-function IconAccount({ active }: { active: boolean }) {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={active ? "text-white" : "text-white/50"}
-    >
-      <path
-        d="M12 2a5 5 0 100 10 5 5 0 000-10z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <path
-        d="M4 22a8 8 0 0116 0"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
 function DesktopNavLink({
   href,
   label,
@@ -140,7 +116,7 @@ function MobileNavItem({
   href: string;
   label: string;
   active: boolean;
-  icon: React.ReactNode;
+  icon: ReactNode;
 }) {
   return (
     <Link
@@ -166,61 +142,109 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const isActive = (href: string) => pathname === href || (href !== "/" && pathname?.startsWith(href + "/"));
+  const router = useRouter();
+
+  const isActive = (href: string) =>
+    pathname === href || (href !== "/" && pathname?.startsWith(href + "/"));
+
+  const isLoginPage = pathname === "/login";
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isAuthed, setIsAuthed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function check() {
+      const { data } = await supabase.auth.getSession();
+      if (!alive) return;
+
+      const has = !!data.session;
+      setIsAuthed(has);
+      setAuthChecked(true);
+
+      if (!has && !isLoginPage) {
+        router.replace("/login");
+      }
+
+      if (has && isLoginPage) {
+        router.replace("/log");
+      }
+    }
+
+    void check();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      void check();
+    });
+
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [router, isLoginPage]);
 
   return (
     <html lang="en">
       <body className="min-h-screen bg-black text-white">
-        {/* Desktop / top nav */}
-        <header className="hidden md:block border-b border-white/10">
-          <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <Link href="/log" className="text-lg font-semibold">
-              BingeBuddy
-            </Link>
+        {isLoginPage ? (
+          <main className="mx-auto w-full max-w-3xl px-4 py-6">
+            {children}
+          </main>
+        ) : !authChecked ? (
+          <main className="min-h-screen flex items-center justify-center px-6">
+            <div className="text-sm text-white/60">Loading…</div>
+          </main>
+        ) : !isAuthed ? (
+          <main className="min-h-screen flex items-center justify-center px-6">
+            <div className="text-sm text-white/60">Redirecting…</div>
+          </main>
+        ) : (
+          <>
+            {/* Desktop / top nav */}
+            <header className="hidden md:block border-b border-white/10">
+              <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <Link href="/log" className="text-lg font-semibold">
+                  BingeBuddy
+                </Link>
 
-            <nav className="flex flex-wrap gap-1">
-              <DesktopNavLink href="/log" label="Log" active={isActive("/log")} />
-              <DesktopNavLink href="/my-list" label="My List" active={isActive("/my-list")} />
-              <DesktopNavLink href="/profile" label="Profile" active={isActive("/profile")} />
-              <DesktopNavLink href="/login" label="Account" active={isActive("/login")} />
+                <nav className="flex flex-wrap gap-1">
+                  <DesktopNavLink href="/log" label="Log" active={isActive("/log")} />
+                  <DesktopNavLink href="/my-list" label="My List" active={isActive("/my-list")} />
+                  <DesktopNavLink href="/profile" label="Profile" active={isActive("/profile")} />
+                </nav>
+              </div>
+            </header>
+
+            {/* Content (extra bottom padding on mobile for bottom nav) */}
+            <main className="mx-auto w-full max-w-3xl px-4 py-6 pb-24 md:pb-6">
+              {children}
+            </main>
+
+            {/* Mobile / bottom nav */}
+            <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/90 backdrop-blur">
+              <div className="mx-auto w-full max-w-3xl px-4 py-3 grid grid-cols-3 gap-2">
+                <MobileNavItem
+                  href="/log"
+                  label="Log"
+                  active={isActive("/log")}
+                  icon={<IconLog active={isActive("/log")} />}
+                />
+                <MobileNavItem
+                  href="/my-list"
+                  label="My List"
+                  active={isActive("/my-list")}
+                  icon={<IconList active={isActive("/my-list")} />}
+                />
+                <MobileNavItem
+                  href="/profile"
+                  label="Profile"
+                  active={isActive("/profile")}
+                  icon={<IconProfile active={isActive("/profile")} />}
+                />
+              </div>
             </nav>
-          </div>
-        </header>
-
-        {/* Content (extra bottom padding on mobile for bottom nav) */}
-        <main className="mx-auto w-full max-w-3xl px-4 py-6 pb-24 md:pb-6">
-          {children}
-        </main>
-
-        {/* Mobile / bottom nav */}
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/90 backdrop-blur">
-          <div className="mx-auto w-full max-w-3xl px-4 py-3 grid grid-cols-4 gap-2">
-            <MobileNavItem
-              href="/log"
-              label="Log"
-              active={isActive("/log")}
-              icon={<IconLog active={isActive("/log")} />}
-            />
-            <MobileNavItem
-              href="/my-list"
-              label="My List"
-              active={isActive("/my-list")}
-              icon={<IconList active={isActive("/my-list")} />}
-            />
-            <MobileNavItem
-              href="/profile"
-              label="Profile"
-              active={isActive("/profile")}
-              icon={<IconProfile active={isActive("/profile")} />}
-            />
-            <MobileNavItem
-              href="/login"
-              label="Account"
-              active={isActive("/login")}
-              icon={<IconAccount active={isActive("/login")} />}
-            />
-          </div>
-        </nav>
+          </>
+        )}
       </body>
     </html>
   );

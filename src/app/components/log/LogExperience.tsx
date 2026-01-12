@@ -12,76 +12,40 @@ import {
   type CompareSession,
 } from "@/core/logic/state";
 import Link from "next/link";
+import {
+  addToWantToWatch,
+  removeFromWantToWatchByTitle,
+  removeFromWantToWatchByTmdbId,
+} from "@/core/storage/wantToWatchStorage";
+import { safeGetWantToWatch } from "@/core/storage/wantToWatchStorage";
+import { saveToBackend } from "@/core/storage/backendSync";
+import { supabase } from "@/lib/supabaseClient";
 
-type WantToWatchItem = {
-  id: string;
-  title: string;
-  tmdbId: number | null;
-  posterPath: string | null;
-  year: string | null;
-  genres: string[];
-};
 
-const WANT_TO_WATCH_KEY = "bingebuddy.wantToWatch";
 const MAX_SKIPS_BEFORE_AUTOPLACE = 5;
 
-function safeGetWantToWatch(): WantToWatchItem[] {
-  try {
-    const raw = localStorage.getItem(WANT_TO_WATCH_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed
-      .filter((x) => x && typeof x.id === "string" && typeof x.title === "string")
-      .map((x) => {
-        const tmdbId = typeof x.tmdbId === "number" ? x.tmdbId : null;
-        const posterPath = typeof x.posterPath === "string" ? x.posterPath : null;
-        const year = typeof x.year === "string" ? x.year : null;
-        const genres = Array.isArray(x.genres) ? x.genres.filter((g: unknown) => typeof g === "string") : [];
-
-        return {
-          id: x.id,
-          title: x.title,
-          tmdbId,
-          posterPath,
-          year,
-          genres,
-        };
-      });
-  } catch {
-    return [];
-  }
+function notifyStateChanged() {
+  // Used by the Supabase sync layer (and any other listeners) to persist changes.
+  // This keeps LogExperience decoupled from backend details.
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event("bingebuddy:state-changed"));
 }
 
-function safeSetWantToWatch(items: WantToWatchItem[]) {
+async function saveSnapshotToCloud(): Promise<void> {
   try {
-    localStorage.setItem(WANT_TO_WATCH_KEY, JSON.stringify(items));
+    const sessionRes = await supabase.auth.getSession();
+    const user = sessionRes.data.session?.user ?? null;
+    if (!user) return; // not signed in -> local only
+
+    const state = getState();
+    const wtw = safeGetWantToWatch();
+
+    // Fire-and-forget write-through. Errors are intentionally ignored here
+    // because the UI already works offline/local-first.
+    await saveToBackend(user.id, state, wtw as any);
   } catch {
     // ignore
   }
-}
-
-function removeFromWantToWatchByTitle(title: string) {
-  const clean = title.trim().toLowerCase();
-  if (!clean) return;
-
-  const current = safeGetWantToWatch();
-  const next = current.filter((x) => x.title.trim().toLowerCase() !== clean);
-  safeSetWantToWatch(next);
-}
-
-function removeFromWantToWatchByTmdbId(tmdbId: number) {
-  if (!Number.isFinite(tmdbId)) return;
-  const current = safeGetWantToWatch();
-  const next = current.filter((x) => x.tmdbId !== tmdbId);
-  safeSetWantToWatch(next);
-}
-
-function makeId(): string {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const c = crypto as any;
-  return typeof c?.randomUUID === "function" ? c.randomUUID() : String(Date.now());
 }
 
 type UndoEntry = {
@@ -225,49 +189,34 @@ export default function LogExperience() {
     setSelectedMeta(null);
     setSelectedTmdbId(null);
 
+    // Tell the sync layer we changed local data (ranked list + want-to-watch removal)
+    notifyStateChanged();
+    // Write-through so cloud is updated BEFORE any screen (like Profile) reloads from backend
+    void saveSnapshotToCloud();
     router.push(`/saved?${params.toString()}`);
   }
 
   function handleAddToWantToWatch() {
     const clean = title.trim();
-    if (!clean) {
-      setError("Enter a show title to save it.");
-      return;
-    }
 
-    // If it's already ranked, don't allow adding to Want to Watch.
-    const alreadyRanked = ranked.some(
-      (s) => s.title.trim().toLowerCase() === clean.toLowerCase()
-    );
-
-    if (alreadyRanked) {
-      setError("That show is already ranked — no need to save it.");
-      return;
-    }
-
-    const current = safeGetWantToWatch();
-
-    const selectedId = typeof selectedTmdbId === "number" ? selectedTmdbId : null;
-
-    const exists = selectedId
-      ? current.some((x) => x.tmdbId === selectedId)
-      : current.some((x) => x.title.trim().toLowerCase() === clean.toLowerCase());
-
-    if (exists) {
-      setError("That show is already in your Want to Watch list.");
-      return;
-    }
-
-    const item: WantToWatchItem = {
-      id: makeId(),
+    const result = addToWantToWatch(ranked as any, {
       title: clean,
-      tmdbId: selectedMeta?.tmdbId ?? selectedId,
+      tmdbId: selectedMeta?.tmdbId ?? (typeof selectedTmdbId === "number" ? selectedTmdbId : null),
       posterPath: selectedMeta?.posterPath ?? null,
       year: selectedMeta?.year ?? null,
       genres: selectedMeta?.genres ?? [],
-    };
+      overview: selectedMeta?.overview ?? "",
+      createdAt: Date.now(),
+    });
 
-    safeSetWantToWatch([...current, item]);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+
+    // Tell the sync layer we changed local data (want-to-watch)
+    notifyStateChanged();
+    void saveSnapshotToCloud();
 
     // Clear metadata when adding to Want To Watch
     setSelectedMeta(null);
@@ -277,6 +226,8 @@ export default function LogExperience() {
     setSession(null);
     setUndoStack([]);
     setSkippedCompareIndexes([]);
+    setError(null);
+
     router.push("/my-list");
   }
 
@@ -294,13 +245,37 @@ export default function LogExperience() {
       return selectedMeta;
     }
 
-    // No TMDB selection -> no metadata to fetch.
-    if (!selectedTmdbId) return undefined;
+    // If the user didn't click a search result, try to auto-pick the first TMDB match.
+    // This prevents ranking shows with missing tmdbId/metadata.
+    let tmdbIdToUse = selectedTmdbId;
+
+    if (!tmdbIdToUse) {
+      const q = title.trim();
+      if (q.length < 2) return undefined;
+
+      try {
+        setIsWorking(true);
+        const res = await fetch(`/api/tmdb/search?query=${encodeURIComponent(q)}`);
+        if (!res.ok) return undefined;
+
+        const json = await res.json();
+        const first = Array.isArray(json?.results) ? json.results[0] : null;
+        const firstId = first && typeof first.tmdbId === "number" ? first.tmdbId : null;
+        if (!firstId) return undefined;
+
+        tmdbIdToUse = firstId;
+        setSelectedTmdbId(firstId);
+      } catch {
+        return undefined;
+      } finally {
+        setIsWorking(false);
+      }
+    }
 
     try {
       setIsWorking(true);
 
-      const res = await fetch(`/api/tmdb/details?id=${selectedTmdbId}`);
+      const res = await fetch(`/api/tmdb/details?id=${tmdbIdToUse}`);
       if (!res.ok) return undefined;
 
       const details = await res.json();
@@ -352,8 +327,16 @@ export default function LogExperience() {
 
     const metaOpts = await ensureMetaForStart();
 
+    if (!metaOpts || typeof metaOpts.tmdbId !== "number") {
+      setError("Pick a show from the search results so we can attach the right metadata.");
+      return;
+    }
+
     if (ranked.length === 0) {
       addFirstShow(clean, metaOpts);
+      // Tell the sync layer we changed local data (ranked list)
+      notifyStateChanged();
+      void saveSnapshotToCloud();
       setTitle("");
       setSession(null);
       setUndoStack([]);
@@ -519,9 +502,10 @@ export default function LogExperience() {
     const prefillTmdbIdRaw = searchParams.get("tmdbId");
     const auto = searchParams.get("auto") === "1";
 
-    // Only run when we're idle and input is empty
+    // Only run when we're idle.
+    // If `auto=1` is set (e.g., coming from Want to Watch → Rank), allow override even if input already has text.
     if (session !== null) return;
-    if (title.trim() !== "") return;
+    if (!auto && title.trim() !== "") return;
 
     async function run() {
       // If tmdbId exists, fetch details and prefill everything
@@ -543,7 +527,45 @@ export default function LogExperience() {
               setTitle(details.title);
 
               if (auto) {
-                void startWithTitle(String(details.title).trim());
+                const clean = String(details.title).trim();
+
+                // Prevent ranking duplicates
+                const alreadyRanked = ranked.some(
+                  (s) => s.title.trim().toLowerCase() === clean.toLowerCase()
+                );
+
+                if (alreadyRanked) {
+                  setError("That show is already ranked.");
+                  return;
+                }
+
+                const metaOpts: MetaOpts = {
+                  tmdbId: details.tmdbId,
+                  posterPath: details.posterPath ?? null,
+                  year: details.year ?? null,
+                  overview: details.overview ?? "",
+                  genres: details.genres ?? [],
+                };
+
+                // Start ranking immediately using the fetched metadata (no async state dependency)
+                if (ranked.length === 0) {
+                  addFirstShow(clean, metaOpts);
+                  setTitle("");
+                  setSession(null);
+                  setUndoStack([]);
+                  setSkippedCompareIndexes([]);
+                  goToSavedScreen(clean);
+                } else {
+                  const s = startComparisonSession(clean, metaOpts);
+                  if (s) {
+                    setSession(s);
+                    setUndoStack([]);
+                    setSkippedCompareIndexes([]);
+                    setError(null);
+                  }
+                }
+
+                return;
               }
               return;
             }

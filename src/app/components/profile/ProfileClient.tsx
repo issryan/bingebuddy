@@ -1,49 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getRankedShows, getState } from "@/core/logic/state";
+import { getRankedShows, getState, setState } from "@/core/logic/state";
+import { supabase } from "@/lib/supabaseClient";
+import {
+  safeGetWantToWatch,
+  safeSetWantToWatch,
+  type WantToWatchItem as StorageWantToWatchItem,
+} from "@/core/storage/wantToWatchStorage";
 
-type WantToWatchItem = {
-  id: string;
-  title: string;
-  tmdbId: number | null;
-  posterPath: string | null;
-  year: string | null;
-  genres: string[];
-};
-
-const WANT_TO_WATCH_KEY = "bingebuddy.wantToWatch";
-
-function safeGetWantToWatch(): WantToWatchItem[] {
-  try {
-    const raw = localStorage.getItem(WANT_TO_WATCH_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed
-      .filter((x) => x && typeof x.id === "string" && typeof x.title === "string")
-      .map((x) => {
-        const tmdbId = typeof (x as any).tmdbId === "number" ? (x as any).tmdbId : null;
-        const posterPath = typeof (x as any).posterPath === "string" ? (x as any).posterPath : null;
-        const year = typeof (x as any).year === "string" ? (x as any).year : null;
-        const genres = Array.isArray((x as any).genres)
-          ? (x as any).genres.filter((g: unknown) => typeof g === "string")
-          : [];
-
-        return {
-          id: (x as any).id,
-          title: (x as any).title,
-          tmdbId,
-          posterPath,
-          year,
-          genres,
-        };
-      });
-  } catch {
-    return [];
-  }
-}
+// For backend sync we require overview to always be a string (never undefined)
+type NormalizedWantToWatchItem = StorageWantToWatchItem & { overview: string };
+import {
+  loadFromBackend,
+  saveToBackend,
+} from "@/core/storage/backendSync";
 
 function formatShortDate(ms: number): string {
   try {
@@ -57,6 +28,33 @@ function formatShortDate(ms: number): string {
   }
 }
 
+function normalizeWantToWatch(items: unknown): NormalizedWantToWatchItem[] {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .filter((x) => x && typeof (x as any).id === "string" && typeof (x as any).title === "string")
+    .map((x) => {
+      const it = x as any;
+      return {
+        id: it.id,
+        title: typeof it.title === "string" ? it.title : "",
+        tmdbId: typeof it.tmdbId === "number" ? it.tmdbId : null,
+        posterPath: typeof it.posterPath === "string" ? it.posterPath : null,
+        year: typeof it.year === "string" ? it.year : null,
+        genres: Array.isArray(it.genres) ? it.genres.filter((g: unknown) => typeof g === "string") : [],
+        // IMPORTANT: keep overview always as a string so TS + sync stay consistent
+        overview: typeof it.overview === "string" ? it.overview : "",
+      } as NormalizedWantToWatchItem;
+    });
+}
+
+type SyncStatus =
+  | { type: "idle"; message: string }
+  | { type: "loading"; message: string }
+  | { type: "synced"; message: string }
+  | { type: "local"; message: string }
+  | { type: "error"; message: string };
+
 export default function ProfileClient() {
   const [rankedCount, setRankedCount] = useState(0);
   const [wantToWatchCount, setWantToWatchCount] = useState(0);
@@ -68,7 +66,15 @@ export default function ProfileClient() {
   const [daysSinceFirst, setDaysSinceFirst] = useState<number | null>(null);
   const [topGenres, setTopGenres] = useState<Array<{ genre: string; count: number }>>([]);
 
-  useEffect(() => {
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
+    type: "idle",
+    message: "",
+  });
+
+  // Success toast: briefly show “Synced …” then hide.
+  const [showSyncedToast, setShowSyncedToast] = useState(false);
+
+  function recomputeStatsFromLocal() {
     const ranked = getRankedShows(getState());
     setRankedCount(ranked.length);
 
@@ -95,11 +101,17 @@ export default function ProfileClient() {
     setBottomShow({ title: last.title, rating: last.rating });
 
     // Newest ranked (based on createdAt)
-    const newest = ranked.reduce((best, cur) => (cur.createdAt > best.createdAt ? cur : best), ranked[0]);
+    const newest = ranked.reduce(
+      (best, cur) => (cur.createdAt > best.createdAt ? cur : best),
+      ranked[0]
+    );
     setNewestShow({ title: newest.title, dateLabel: formatShortDate(newest.createdAt) });
 
     // Days since first log
-    const earliest = ranked.reduce((best, cur) => (cur.createdAt < best.createdAt ? cur : best), ranked[0]);
+    const earliest = ranked.reduce(
+      (best, cur) => (cur.createdAt < best.createdAt ? cur : best),
+      ranked[0]
+    );
     const days = Math.floor((Date.now() - earliest.createdAt) / (1000 * 60 * 60 * 24));
     setDaysSinceFirst(Math.max(0, days));
 
@@ -119,6 +131,169 @@ export default function ProfileClient() {
       .slice(0, 5);
 
     setTopGenres(sorted);
+  }
+
+  // Sprint 5: on profile load, if signed in, prefer backend data.
+  // - If backend has data -> load it into localStorage (cache) and recompute.
+  // - If backend empty -> migrate localStorage up to backend.
+  useEffect(() => {
+    let cancelled = false;
+    let syncedToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+    async function run() {
+      const showSynced = (message: string) => {
+        setSyncStatus({ type: "synced", message });
+        setShowSyncedToast(true);
+
+        if (syncedToastTimer) clearTimeout(syncedToastTimer);
+        syncedToastTimer = setTimeout(() => {
+          if (!cancelled) setShowSyncedToast(false);
+        }, 2000);
+      };
+
+      setSyncStatus({ type: "loading", message: "Checking your cloud data…" });
+
+      const sessionRes = await supabase.auth.getSession();
+      const user = sessionRes.data.session?.user ?? null;
+
+      // If not signed in, we just show local stats (layout should redirect anyway)
+      if (!user) {
+        if (cancelled) return;
+        setSyncStatus({ type: "local", message: "Saved locally (not signed in)." });
+        recomputeStatsFromLocal();
+        return;
+      }
+
+      // 1) Try loading from backend
+      const loaded = await loadFromBackend(user.id);
+      if (cancelled) return;
+
+      if (!loaded.ok) {
+        // Backend unavailable; fall back to local
+        setSyncStatus({ type: "error", message: `Cloud sync failed: ${loaded.error}` });
+        recomputeStatsFromLocal();
+        return;
+      }
+
+      const cloud = loaded.data;
+      const cloudHasAnyData =
+        (cloud.state.shows?.length ?? 0) > 0 || (cloud.wantToWatch?.length ?? 0) > 0;
+
+      if (cloudHasAnyData) {
+        // Backend is source of truth → overwrite local cache
+        setState(cloud.state);
+        safeSetWantToWatch(normalizeWantToWatch(cloud.wantToWatch));
+        showSynced("Synced from cloud.");
+        recomputeStatsFromLocal();
+        return;
+      }
+
+      // 2) Backend empty → migrate local up
+      const localState = getState();
+      const localWTW = normalizeWantToWatch(safeGetWantToWatch());
+
+      const hasLocalData =
+        (localState.shows?.length ?? 0) > 0 || (localWTW?.length ?? 0) > 0;
+
+      if (!hasLocalData) {
+        showSynced("Cloud ready.");
+        recomputeStatsFromLocal();
+        return;
+      }
+
+      setSyncStatus({ type: "loading", message: "Migrating your local data to the cloud…" });
+
+      const saved = await saveToBackend(user.id, localState, localWTW);
+      if (cancelled) return;
+
+      if (!saved.ok) {
+        setSyncStatus({
+          type: "error",
+          message: `Couldn’t sync to cloud (saved locally): ${saved.error}`,
+        });
+        recomputeStatsFromLocal();
+        return;
+      }
+
+      showSynced("Synced to cloud.");
+      recomputeStatsFromLocal();
+    }
+
+    void run();
+
+    // Also re-run stats if auth status changes while on this page
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      void run();
+    });
+
+    return () => {
+      cancelled = true;
+      if (syncedToastTimer) clearTimeout(syncedToastTimer);
+      sub.subscription.unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save-through: whenever local data changes, persist the latest snapshot to Supabase.
+  // This prevents items from "coming back" from the cloud after being removed locally.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    async function flushToCloud() {
+      const sessionRes = await supabase.auth.getSession();
+      const user = sessionRes.data.session?.user ?? null;
+      if (!user) return;
+
+      const localState = getState();
+      const localWTW = normalizeWantToWatch(safeGetWantToWatch());
+
+      const hasLocalData =
+        (localState.shows?.length ?? 0) > 0 || (localWTW?.length ?? 0) > 0;
+      if (!hasLocalData) return;
+
+      // Keep this subtle: only show a short syncing message.
+      setSyncStatus({ type: "loading", message: "Syncing…" });
+
+      const saved = await saveToBackend(user.id, localState, localWTW);
+      if (cancelled) return;
+
+      if (!saved.ok) {
+        setSyncStatus({ type: "error", message: `Cloud sync failed: ${saved.error}` });
+        return;
+      }
+
+      // Brief success toast
+      setSyncStatus({ type: "synced", message: "Synced." });
+      setShowSyncedToast(true);
+      setTimeout(() => {
+        if (!cancelled) setShowSyncedToast(false);
+      }, 1200);
+
+      // Recompute counts so profile stays accurate
+      recomputeStatsFromLocal();
+    }
+
+    function onChanged() {
+      if (timer) clearTimeout(timer);
+      // Debounce rapid updates (drag reorder, etc.)
+      timer = setTimeout(() => {
+        void flushToCloud();
+      }, 450);
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("bingebuddy:state-changed", onChanged);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("bingebuddy:state-changed", onChanged);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const avgText = useMemo(() => {
@@ -128,6 +303,28 @@ export default function ProfileClient() {
 
   return (
     <div className="space-y-3">
+      {/* Sprint 5: lightweight sync status */}
+      {syncStatus.message &&
+      (syncStatus.type === "loading" ||
+        syncStatus.type === "error" ||
+        syncStatus.type === "local" ||
+        (syncStatus.type === "synced" && showSyncedToast)) ? (
+        <div
+          className={
+            "rounded-2xl border p-4 text-sm transition-opacity " +
+            (syncStatus.type === "synced"
+              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+              : syncStatus.type === "loading"
+              ? "border-white/10 bg-white/[0.03] text-white/70"
+              : syncStatus.type === "error"
+              ? "border-red-500/30 bg-red-500/10 text-red-200"
+              : "border-white/10 bg-white/[0.03] text-white/70")
+          }
+        >
+          {syncStatus.message}
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
           <div className="text-white/70 text-sm">Ranked shows</div>
@@ -152,9 +349,7 @@ export default function ProfileClient() {
           <div className="mt-1 text-lg font-semibold truncate">
             {topShow ? topShow.title : "—"}
           </div>
-          <div className="mt-1 text-sm text-white/60">
-            {topShow ? `Rating ${topShow.rating}` : ""}
-          </div>
+          <div className="mt-1 text-sm text-white/60">{topShow ? `Rating ${topShow.rating}` : ""}</div>
         </div>
 
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
@@ -172,16 +367,12 @@ export default function ProfileClient() {
           <div className="mt-1 text-lg font-semibold truncate">
             {newestShow ? newestShow.title : "—"}
           </div>
-          <div className="mt-1 text-sm text-white/60">
-            {newestShow ? newestShow.dateLabel : ""}
-          </div>
+          <div className="mt-1 text-sm text-white/60">{newestShow ? newestShow.dateLabel : ""}</div>
         </div>
 
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
           <div className="text-white/70 text-sm">Days since first log</div>
-          <div className="mt-1 text-3xl font-semibold">
-            {daysSinceFirst === null ? "—" : daysSinceFirst}
-          </div>
+          <div className="mt-1 text-3xl font-semibold">{daysSinceFirst === null ? "—" : daysSinceFirst}</div>
         </div>
 
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">

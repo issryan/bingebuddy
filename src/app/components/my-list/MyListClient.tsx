@@ -4,18 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getRankedShows, getState, reorderShows } from "@/core/logic/state";
 import RankedDragList from "./RankedDragList";
-
-type WantToWatchItem = {
-  id: string;
-  title: string;
-  tmdbId: number | null;
-  posterPath: string | null;
-  year: string | null;
-  genres: string[];
-};
-
-
-const WANT_TO_WATCH_KEY = "bingebuddy.wantToWatch";
+import { safeGetWantToWatch, type WantToWatchItem } from "@/core/storage/wantToWatchStorage";
 
 const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
 
@@ -33,37 +22,6 @@ function ratingBadgeClass(rating: number): string {
   if (rating >= 7) return "border-green-400/40 text-green-300";
   if (rating >= 4) return "border-yellow-400/40 text-yellow-300";
   return "border-red-400/40 text-red-300";
-}
-
-function safeGetWantToWatch(): WantToWatchItem[] {
-  try {
-    const raw = localStorage.getItem(WANT_TO_WATCH_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed
-      .filter((x) => x && typeof x.id === "string" && typeof x.title === "string")
-      .map((x) => {
-        const tmdbId = typeof (x as any).tmdbId === "number" ? (x as any).tmdbId : null;
-        const posterPath = typeof (x as any).posterPath === "string" ? (x as any).posterPath : null;
-        const year = typeof (x as any).year === "string" ? (x as any).year : null;
-        const genres = Array.isArray((x as any).genres)
-          ? (x as any).genres.filter((g: unknown) => typeof g === "string")
-          : [];
-
-        return {
-          id: (x as any).id,
-          title: (x as any).title,
-          tmdbId,
-          posterPath,
-          year,
-          genres,
-        };
-      });
-  } catch {
-    return [];
-  }
 }
 
 function tabClass(active: boolean): string {

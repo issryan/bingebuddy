@@ -3,6 +3,14 @@ import type { RankedShow, Show } from "../types/show";
 import { loadState, saveState } from "../storage/localStorage";
 import { insertByComparison, withDerivedRatings, type Preference } from "./ranking";
 
+export type MetaOpts = {
+  tmdbId?: number | null;
+  posterPath?: string | null;
+  year?: string | null;
+  genres?: string[];
+  overview?: string;
+};
+
 /**
  * A temporary in-memory session while we place a NEW show.
  * We DO NOT store this in localStorage in v1 (it's just UI flow state).
@@ -12,7 +20,7 @@ export type CompareSession = {
   newShow: Show;
 
   // Search bounds for insertion (like binary search)
-  low: number;  // inclusive
+  low: number; // inclusive
   high: number; // exclusive
 
   // Which index the app is currently asking the user to compare against
@@ -35,32 +43,31 @@ function titleExists(state: AppState, title: string): boolean {
  * - Ranking truth is still the list order (NOT rating)
  * - TMDB metadata is optional and can be filled later
  */
-export function createShow(
-  title: string,
-  opts?: {
-    tmdbId?: number | null;
-    posterPath?: string | null;
-    year?: string | null;
-    overview?: string;
-    genres?: string[];
-  }
-): Show {
+export function createShow(title: string, opts?: MetaOpts): Show {
   // Use crypto.randomUUID if available (modern browsers), otherwise fallback.
   const id =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+  const tmdbId = typeof opts?.tmdbId === "number" ? opts.tmdbId : null;
+  const posterPath = typeof opts?.posterPath === "string" ? opts.posterPath : null;
+  const year = typeof opts?.year === "string" ? opts.year : null;
+  const overview = typeof opts?.overview === "string" ? opts.overview : "";
+  const genres = Array.isArray(opts?.genres)
+    ? opts!.genres.filter((g) => typeof g === "string")
+    : [];
+
   return {
     id,
-    tmdbId: opts?.tmdbId ?? null,
+    tmdbId,
     title: title.trim(),
     createdAt: Date.now(),
-    posterPath: opts?.posterPath ?? null,
-    year: opts?.year ?? null,
-    overview: opts?.overview ?? "",
-    genres: opts?.genres ?? [],
-  };
+    posterPath,
+    year,
+    overview,
+    genres,
+  } as unknown as Show;
 }
 
 /**
@@ -83,16 +90,7 @@ export function setState(state: AppState): void {
  * Add the very first show.
  * If there are already shows, we DO NOT add here (comparison is required).
  */
-export function addFirstShow(
-  title: string,
-  opts?: {
-    tmdbId?: number | null;
-    posterPath?: string | null;
-    year?: string | null;
-    overview?: string;
-    genres?: string[];
-  }
-): AppState {
+export function addFirstShow(title: string, opts?: MetaOpts): AppState {
   const state = getState();
 
   // Guard: don't allow duplicates (case-insensitive)
@@ -134,13 +132,7 @@ export function addShowByComparison(
   title: string,
   comparisonShowId: string,
   preference: Preference,
-  opts?: {
-    tmdbId?: number | null;
-    posterPath?: string | null;
-    year?: string | null;
-    overview?: string;
-    genres?: string[];
-  }
+  opts?: MetaOpts
 ): AppState {
   const state = getState();
 
@@ -175,16 +167,7 @@ export function getRankedShows(state: AppState): RankedShow[] {
  * Start a comparison session for inserting a new show.
  * The app chooses the first comparison target automatically (middle of the list).
  */
-export function startComparisonSession(
-  title: string,
-  opts?: {
-    tmdbId?: number | null;
-    posterPath?: string | null;
-    year?: string | null;
-    overview?: string;
-    genres?: string[];
-  }
-): CompareSession | null {
+export function startComparisonSession(title: string, opts?: MetaOpts): CompareSession | null {
   const state = getState();
 
   // Guard: don't allow duplicates (case-insensitive)
