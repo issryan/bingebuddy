@@ -48,13 +48,6 @@ function normalizeWantToWatch(items: unknown): NormalizedWantToWatchItem[] {
     });
 }
 
-type SyncStatus =
-  | { type: "idle"; message: string }
-  | { type: "loading"; message: string }
-  | { type: "synced"; message: string }
-  | { type: "local"; message: string }
-  | { type: "error"; message: string };
-
 export default function ProfileClient() {
   const [rankedCount, setRankedCount] = useState(0);
   const [wantToWatchCount, setWantToWatchCount] = useState(0);
@@ -65,14 +58,6 @@ export default function ProfileClient() {
   const [newestShow, setNewestShow] = useState<{ title: string; dateLabel: string } | null>(null);
   const [daysSinceFirst, setDaysSinceFirst] = useState<number | null>(null);
   const [topGenres, setTopGenres] = useState<Array<{ genre: string; count: number }>>([]);
-
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
-    type: "idle",
-    message: "",
-  });
-
-  // Success toast: briefly show “Synced …” then hide.
-  const [showSyncedToast, setShowSyncedToast] = useState(false);
 
   function recomputeStatsFromLocal() {
     const ranked = getRankedShows(getState());
@@ -133,167 +118,46 @@ export default function ProfileClient() {
     setTopGenres(sorted);
   }
 
-  // Sprint 5: on profile load, if signed in, prefer backend data.
-  // - If backend has data -> load it into localStorage (cache) and recompute.
-  // - If backend empty -> migrate localStorage up to backend.
   useEffect(() => {
     let cancelled = false;
-    let syncedToastTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function run() {
-      const showSynced = (message: string) => {
-        setSyncStatus({ type: "synced", message });
-        setShowSyncedToast(true);
-
-        if (syncedToastTimer) clearTimeout(syncedToastTimer);
-        syncedToastTimer = setTimeout(() => {
-          if (!cancelled) setShowSyncedToast(false);
-        }, 2000);
-      };
-
-      setSyncStatus({ type: "loading", message: "Checking your cloud data…" });
-
       const sessionRes = await supabase.auth.getSession();
       const user = sessionRes.data.session?.user ?? null;
 
-      // If not signed in, we just show local stats (layout should redirect anyway)
       if (!user) {
-        if (cancelled) return;
-        setSyncStatus({ type: "local", message: "Saved locally (not signed in)." });
         recomputeStatsFromLocal();
         return;
       }
 
-      // 1) Try loading from backend
       const loaded = await loadFromBackend(user.id);
       if (cancelled) return;
 
-      if (!loaded.ok) {
-        // Backend unavailable; fall back to local
-        setSyncStatus({ type: "error", message: `Cloud sync failed: ${loaded.error}` });
-        recomputeStatsFromLocal();
-        return;
+      if (loaded.ok) {
+        const cloud = loaded.data;
+        const cloudHasAnyData =
+          (cloud.state.shows?.length ?? 0) > 0 ||
+          (cloud.wantToWatch?.length ?? 0) > 0;
+
+        if (cloudHasAnyData) {
+          setState(cloud.state);
+          safeSetWantToWatch(normalizeWantToWatch(cloud.wantToWatch));
+        }
       }
 
-      const cloud = loaded.data;
-      const cloudHasAnyData =
-        (cloud.state.shows?.length ?? 0) > 0 || (cloud.wantToWatch?.length ?? 0) > 0;
-
-      if (cloudHasAnyData) {
-        // Backend is source of truth → overwrite local cache
-        setState(cloud.state);
-        safeSetWantToWatch(normalizeWantToWatch(cloud.wantToWatch));
-        showSynced("Synced from cloud.");
-        recomputeStatsFromLocal();
-        return;
-      }
-
-      // 2) Backend empty → migrate local up
-      const localState = getState();
-      const localWTW = normalizeWantToWatch(safeGetWantToWatch());
-
-      const hasLocalData =
-        (localState.shows?.length ?? 0) > 0 || (localWTW?.length ?? 0) > 0;
-
-      if (!hasLocalData) {
-        showSynced("Cloud ready.");
-        recomputeStatsFromLocal();
-        return;
-      }
-
-      setSyncStatus({ type: "loading", message: "Migrating your local data to the cloud…" });
-
-      const saved = await saveToBackend(user.id, localState, localWTW);
-      if (cancelled) return;
-
-      if (!saved.ok) {
-        setSyncStatus({
-          type: "error",
-          message: `Couldn’t sync to cloud (saved locally): ${saved.error}`,
-        });
-        recomputeStatsFromLocal();
-        return;
-      }
-
-      showSynced("Synced to cloud.");
       recomputeStatsFromLocal();
     }
 
     void run();
 
-    // Also re-run stats if auth status changes while on this page
     const { data: sub } = supabase.auth.onAuthStateChange(() => {
       void run();
     });
 
     return () => {
       cancelled = true;
-      if (syncedToastTimer) clearTimeout(syncedToastTimer);
       sub.subscription.unsubscribe();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Save-through: whenever local data changes, persist the latest snapshot to Supabase.
-  // This prevents items from "coming back" from the cloud after being removed locally.
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let cancelled = false;
-
-    async function flushToCloud() {
-      const sessionRes = await supabase.auth.getSession();
-      const user = sessionRes.data.session?.user ?? null;
-      if (!user) return;
-
-      const localState = getState();
-      const localWTW = normalizeWantToWatch(safeGetWantToWatch());
-
-      const hasLocalData =
-        (localState.shows?.length ?? 0) > 0 || (localWTW?.length ?? 0) > 0;
-      if (!hasLocalData) return;
-
-      // Keep this subtle: only show a short syncing message.
-      setSyncStatus({ type: "loading", message: "Syncing…" });
-
-      const saved = await saveToBackend(user.id, localState, localWTW);
-      if (cancelled) return;
-
-      if (!saved.ok) {
-        setSyncStatus({ type: "error", message: `Cloud sync failed: ${saved.error}` });
-        return;
-      }
-
-      // Brief success toast
-      setSyncStatus({ type: "synced", message: "Synced." });
-      setShowSyncedToast(true);
-      setTimeout(() => {
-        if (!cancelled) setShowSyncedToast(false);
-      }, 1200);
-
-      // Recompute counts so profile stays accurate
-      recomputeStatsFromLocal();
-    }
-
-    function onChanged() {
-      if (timer) clearTimeout(timer);
-      // Debounce rapid updates (drag reorder, etc.)
-      timer = setTimeout(() => {
-        void flushToCloud();
-      }, 450);
-    }
-
-    if (typeof window !== "undefined") {
-      window.addEventListener("bingebuddy:state-changed", onChanged);
-    }
-
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-      if (typeof window !== "undefined") {
-        window.removeEventListener("bingebuddy:state-changed", onChanged);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const avgText = useMemo(() => {
@@ -303,28 +167,6 @@ export default function ProfileClient() {
 
   return (
     <div className="space-y-3">
-      {/* Sprint 5: lightweight sync status */}
-      {syncStatus.message &&
-      (syncStatus.type === "loading" ||
-        syncStatus.type === "error" ||
-        syncStatus.type === "local" ||
-        (syncStatus.type === "synced" && showSyncedToast)) ? (
-        <div
-          className={
-            "rounded-2xl border p-4 text-sm transition-opacity " +
-            (syncStatus.type === "synced"
-              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
-              : syncStatus.type === "loading"
-              ? "border-white/10 bg-white/[0.03] text-white/70"
-              : syncStatus.type === "error"
-              ? "border-red-500/30 bg-red-500/10 text-red-200"
-              : "border-white/10 bg-white/[0.03] text-white/70")
-          }
-        >
-          {syncStatus.message}
-        </div>
-      ) : null}
-
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
           <div className="text-white/70 text-sm">Ranked shows</div>
