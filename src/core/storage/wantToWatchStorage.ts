@@ -1,4 +1,5 @@
 import type { Show } from "../types/show";
+import { wantToWatchStorageKey } from "./keys";
 
 export type WantToWatchItem = {
   id: string;
@@ -12,13 +13,11 @@ export type WantToWatchItem = {
   createdAt?: number;
 };
 
-export const WANT_TO_WATCH_KEY = "bingebuddy.wantToWatch";
-
 export function safeGetWantToWatch(): WantToWatchItem[] {
   if (typeof window === "undefined") return [];
 
   try {
-    const raw = localStorage.getItem(WANT_TO_WATCH_KEY);
+    const raw = localStorage.getItem(wantToWatchStorageKey());
     if (!raw) return [];
 
     const parsed = JSON.parse(raw);
@@ -57,7 +56,7 @@ export function safeSetWantToWatch(items: WantToWatchItem[]) {
   if (typeof window === "undefined") return;
 
   try {
-    localStorage.setItem(WANT_TO_WATCH_KEY, JSON.stringify(items));
+    localStorage.setItem(wantToWatchStorageKey(), JSON.stringify(items));
   } catch {
     // ignore
   }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { setActiveUserId } from "@/core/storage/scope";
 
 function IconLog({ active }: { active: boolean }) {
   return (
@@ -158,7 +159,12 @@ export default function RootLayout({
       const { data } = await supabase.auth.getSession();
       if (!alive) return;
 
-      const has = !!data.session;
+      const userId = data.session?.user?.id ?? null;
+      const has = !!userId;
+
+      // IMPORTANT: scope localStorage to the signed-in user (or guest when signed out)
+      setActiveUserId(userId);
+
       setIsAuthed(has);
       setAuthChecked(true);
 

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { getRankedShows, getState, reorderShows } from "@/core/logic/state";
 import RankedDragList from "./RankedDragList";
 import { safeGetWantToWatch, type WantToWatchItem } from "@/core/storage/wantToWatchStorage";
+import { saveToBackend } from "@/core/storage/backendSync";
+import { supabase } from "@/lib/supabaseClient";
 
 const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
 
@@ -39,6 +41,23 @@ export default function MyListClient() {
 
   type TabKey = "ranked" | "watch" | "recs";
   const [activeTab, setActiveTab] = useState<TabKey>("ranked");
+
+  async function saveSnapshotToCloud(): Promise<void> {
+    try {
+      const sessionRes = await supabase.auth.getSession();
+      const user = sessionRes.data.session?.user ?? null;
+      if (!user) return;
+
+      const state = getState();
+      const wtw = safeGetWantToWatch().map((item) => ({
+        ...item,
+        overview: item.overview ?? "",
+      }));
+      await saveToBackend(user.id, state, wtw as any);
+    } catch {
+      // silent — local-first UX
+    }
+  }
 
   useEffect(() => {
     setRanked(getRankedShows(getState()));
@@ -113,6 +132,7 @@ export default function MyListClient() {
                   onCommitReorder={(from, to) => {
                     reorderShows(from, to);
                     setRanked(getRankedShows(getState()));
+                    void saveSnapshotToCloud();
                   }}
                 />
               </>
@@ -240,7 +260,7 @@ export default function MyListClient() {
 
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={async () => {
                               const params = new URLSearchParams();
                               if (item.tmdbId) {
                                 params.set("tmdbId", String(item.tmdbId));
@@ -248,6 +268,9 @@ export default function MyListClient() {
                                 params.set("title", item.title);
                               }
                               params.set("auto", "1");
+
+                              // Ensure backend knows this item still exists before ranking flow mutates it
+                              await saveSnapshotToCloud();
                               router.push(`/log?${params.toString()}`);
                             }}
                             className="shrink-0 rounded-xl bg-white text-black font-medium px-3 py-2 text-sm"
