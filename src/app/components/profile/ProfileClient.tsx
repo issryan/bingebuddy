@@ -28,6 +28,34 @@ function formatShortDate(ms: number): string {
   }
 }
 
+function migratedFlagKey(userId: string): string {
+  return `bingebuddy.migratedToCloud.${userId}`;
+}
+
+function getMigratedToCloud(userId: string): boolean {
+  try {
+    return localStorage.getItem(migratedFlagKey(userId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setMigratedToCloud(userId: string): void {
+  try {
+    localStorage.setItem(migratedFlagKey(userId), "1");
+  } catch {
+    // ignore
+  }
+}
+
+function clearLegacyLocalState(): void {
+  try {
+    localStorage.removeItem("bingebuddy:v1");
+  } catch {
+    // ignore
+  }
+}
+
 function normalizeWantToWatch(items: unknown): NormalizedWantToWatchItem[] {
   if (!Array.isArray(items)) return [];
 
@@ -140,8 +168,30 @@ export default function ProfileClient() {
           (cloud.wantToWatch?.length ?? 0) > 0;
 
         if (cloudHasAnyData) {
+          // Cloud wins (authoritative)
           setState(cloud.state);
           safeSetWantToWatch(normalizeWantToWatch(cloud.wantToWatch));
+          setMigratedToCloud(user.id);
+          clearLegacyLocalState();
+        } else {
+          // Cloud empty: if local has data and we haven't migrated yet, push local up once.
+          const alreadyMigrated = getMigratedToCloud(user.id);
+          if (!alreadyMigrated) {
+            const localRanked = getState().shows ?? [];
+            const localWTW = normalizeWantToWatch(safeGetWantToWatch());
+            const localHasAnyData = localRanked.length > 0 || localWTW.length > 0;
+
+            if (localHasAnyData) {
+              const saved = await saveToBackend(user.id, { shows: localRanked }, localWTW as any);
+              if (!cancelled && saved.ok) {
+                setMigratedToCloud(user.id);
+                clearLegacyLocalState();
+              }
+            } else {
+              // Nothing to migrate; mark so we don't keep checking
+              setMigratedToCloud(user.id);
+            }
+          }
         }
       }
 
