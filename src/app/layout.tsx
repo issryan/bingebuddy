@@ -2,7 +2,7 @@
 import "./globals.css";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { setActiveUserId } from "@/core/storage/scope";
 
@@ -81,6 +81,115 @@ function IconProfile({ active }: { active: boolean }) {
         strokeLinecap="round"
       />
     </svg>
+  );
+}
+
+function IconSearch({ active }: { active: boolean }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={active ? "text-white" : "text-white/50"}>
+      <path d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" stroke="currentColor" strokeWidth="2" />
+      <path d="M16.5 16.5 21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+type SearchMode = "all" | "shows" | "users";
+
+type SearchShowResult = { kind: "show"; tmdbId: number; title: string; year: string | null; posterPath: string | null };
+type SearchUserResult = { kind: "user"; username: string };
+type SearchResult = SearchShowResult | SearchUserResult;
+
+function GlobalSearchBar({ compact }: { compact?: boolean }) {
+  const router = useRouter();
+  const [q, setQ] = useState("");
+  const [mode, setMode] = useState<SearchMode>("all");
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (ref.current && e.target instanceof Node && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const clean = q.trim();
+    if (clean.length < 2) { setResults([]); return; }
+
+    let alive = true;
+    const t = setTimeout(async () => {
+      setLoading(true);
+      const next: SearchResult[] = [];
+
+      if (mode !== "users") {
+        try {
+          const r = await fetch(`/api/tmdb/search?query=${encodeURIComponent(clean)}`);
+          if (r.ok) {
+            const j = await r.json();
+            (j.results ?? []).slice(0,5).forEach((s:any) => {
+              if (Number.isFinite(s.tmdbId)) next.push({ kind: "show", tmdbId: s.tmdbId, title: s.title, year: s.year ?? null, posterPath: s.posterPath ?? null });
+            });
+          }
+        } catch {}
+      }
+
+      if (mode !== "shows") {
+        try {
+          const r = await fetch(`/api/users/search?query=${encodeURIComponent(clean)}`);
+          if (r.ok) {
+            const j = await r.json();
+            (j.results ?? []).slice(0,5).forEach((u:any) => next.push({ kind: "user", username: u.username }));
+          }
+        } catch {}
+      }
+
+      if (!alive) return;
+      setResults(next);
+      setLoading(false);
+    }, 250);
+
+    return () => { alive = false; clearTimeout(t); };
+  }, [q, mode, open]);
+
+  function goFull() {
+    const clean = q.trim(); if (!clean) return;
+    router.push(`/search?q=${encodeURIComponent(clean)}&type=${mode}`);
+    setOpen(false);
+  }
+
+  function pick(r: SearchResult) {
+    setOpen(false);
+    if (r.kind === "show") router.push(`/show/${r.tmdbId}`);
+    else router.push(`/u/${encodeURIComponent(r.username)}`);
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <div className="flex gap-2">
+        <input value={q} onChange={e=>setQ(e.target.value)} onFocus={()=>setOpen(true)} onKeyDown={e=>{ if(e.key==='Enter') goFull(); }} placeholder="Search shows or friends" className="flex-1 rounded-2xl bg-white/5 border border-white/10 px-4 py-3" />
+        <select value={mode} onChange={e=>setMode(e.target.value as SearchMode)} className="rounded-2xl bg-white/5 border border-white/10 px-3 py-2 text-sm">
+          <option value="all">All</option>
+          <option value="shows">Shows</option>
+          <option value="users">Users</option>
+        </select>
+      </div>
+
+      {open && (
+        <div className="absolute z-50 mt-2 w-full rounded-2xl border border-white/15 bg-black/95">
+          <div className="px-4 py-2 text-xs text-white/60">{loading ? "Searching…" : "Top results"}</div>
+          {results.map((r,i)=>(
+            <button key={i} onClick={()=>pick(r)} className="w-full text-left px-4 py-3 hover:bg-white/10">
+              {r.kind === "show" ? `${r.title}${r.year ? ` (${r.year})` : ''}` : `@${r.username}`}
+            </button>
+          ))}
+          {q.trim() && <button onClick={goFull} className="w-full px-4 py-2 text-sm text-white/70 hover:bg-white/10">See all results →</button>}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -245,7 +354,9 @@ export default function RootLayout({
                 <Link href="/log" className="text-lg font-semibold">
                   BingeBuddy
                 </Link>
-
+                <div className="hidden md:block w-[360px]">
+                  <GlobalSearchBar />
+                </div>
                 <nav className="flex flex-wrap gap-1">
                   <DesktopNavLink href="/log" label="Log" active={isActive("/log")} />
                   <DesktopNavLink href="/my-list" label="My List" active={isActive("/my-list")} />
@@ -256,12 +367,16 @@ export default function RootLayout({
 
             {/* Content (extra bottom padding on mobile for bottom nav) */}
             <main className="mx-auto w-full max-w-3xl px-4 py-6 pb-24 md:pb-6">
+              <div className="md:hidden mb-5">
+                <GlobalSearchBar />
+              </div>
               {children}
             </main>
 
             {/* Mobile / bottom nav */}
             <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/90 backdrop-blur">
-              <div className="mx-auto w-full max-w-3xl px-4 py-3 grid grid-cols-3 gap-2">
+              <div className="mx-auto w-full max-w-3xl px-4 py-3 grid grid-cols-4 gap-2">
+                
                 <MobileNavItem
                   href="/log"
                   label="Log"
