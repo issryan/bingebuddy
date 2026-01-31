@@ -9,7 +9,7 @@ export type WantToWatchItem = {
   posterPath: string | null;
   year: string | null;
   genres: string[];
-  overview: string;
+  overview?: string;
 };
 
 export type BackendResult<T> =
@@ -248,6 +248,309 @@ export async function saveToBackend(
     }
 
     return { ok: true, data: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+// -----------------------------
+// Sprint 6 — Social Foundation
+// -----------------------------
+
+export type ProfileRow = {
+  userId: string;
+  username: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type FriendRequestRow = {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  status: "pending" | "accepted" | "declined" | "cancelled";
+  createdAt: string;
+};
+
+export type FriendshipRow = {
+  userIdA: string;
+  userIdB: string;
+  createdAt: string;
+};
+
+export type ActivityEventRow = {
+  id: string;
+  actorUserId: string;
+  eventType: "rank_completed";
+  tmdbId: number;
+  showTitle: string;
+  posterPath: string | null;
+  year: string | null;
+  rankPosition: number | null;
+  derivedRating: number | null;
+  createdAt: string;
+};
+
+function normalizeUsername(input: string): string {
+  return input.trim().toLowerCase();
+}
+
+function isValidUsername(username: string): boolean {
+  // Minimal rules: 3–20 chars, lowercase letters/numbers/underscore
+  // (Keep it simple and predictable for now.)
+  return /^[a-z0-9_]{3,20}$/.test(username);
+}
+
+/**
+ * Create/update the current user's username.
+ * Table: public.profiles (user_id PK, username unique)
+ */
+export async function upsertUsername(
+  userId: string,
+  username: string
+): Promise<BackendResult<true>> {
+  try {
+    const normalized = normalizeUsername(username);
+
+    if (!isValidUsername(normalized)) {
+      return {
+        ok: false,
+        error: "Username must be 3–20 characters and only use letters, numbers, or _",
+      };
+    }
+
+    const res = await supabase
+      .from("profiles")
+      .upsert(
+        {
+          user_id: userId,
+          username: normalized,
+        },
+        { onConflict: "user_id" }
+      );
+
+    if (res.error) return { ok: false, error: res.error.message };
+
+    return { ok: true, data: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Lookup a user id by exact username (case-insensitive).
+ * Returns null if not found.
+ */
+export async function findUserIdByUsername(
+  username: string
+): Promise<BackendResult<string | null>> {
+  try {
+    const normalized = normalizeUsername(username);
+
+    const res = await supabase
+      .from("profiles")
+      .select("user_id")
+      .eq("username", normalized)
+      .maybeSingle();
+
+    if (res.error) return { ok: false, error: res.error.message };
+    if (!res.data) return { ok: true, data: null };
+
+    return { ok: true, data: String((res.data as any).user_id) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Send a friend request from -> to.
+ */
+export async function sendFriendRequest(
+  fromUserId: string,
+  toUserId: string
+): Promise<BackendResult<true>> {
+  try {
+    if (fromUserId === toUserId) {
+      return { ok: false, error: "You can't add yourself." };
+    }
+
+    const res = await supabase.from("friend_requests").insert({
+      from_user_id: fromUserId,
+      to_user_id: toUserId,
+      status: "pending",
+    });
+
+    if (res.error) return { ok: false, error: res.error.message };
+
+    return { ok: true, data: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * List incoming pending requests for the current user.
+ */
+export async function listIncomingFriendRequests(
+  userId: string
+): Promise<BackendResult<FriendRequestRow[]>> {
+  try {
+    const res = await supabase
+      .from("friend_requests")
+      .select("id, from_user_id, to_user_id, status, created_at")
+      .eq("to_user_id", userId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+
+    if (res.error) return { ok: false, error: res.error.message };
+
+    const rows: FriendRequestRow[] = (res.data ?? []).map((r: any) => ({
+      id: String(r.id),
+      fromUserId: String(r.from_user_id),
+      toUserId: String(r.to_user_id),
+      status: r.status,
+      createdAt: String(r.created_at),
+    }));
+
+    return { ok: true, data: rows };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Accept a pending request.
+ * This will:
+ * - mark request accepted
+ * - create a friendship row
+ */
+export async function acceptFriendRequest(
+  requestId: string
+): Promise<BackendResult<true>> {
+  try {
+    // Update request status first
+    const upd = await supabase
+      .from("friend_requests")
+      .update({ status: "accepted" })
+      .eq("id", requestId);
+
+    if (upd.error) return { ok: false, error: upd.error.message };
+
+    // Fetch request to know the pair
+    const req = await supabase
+      .from("friend_requests")
+      .select("from_user_id, to_user_id")
+      .eq("id", requestId)
+      .maybeSingle();
+
+    if (req.error) return { ok: false, error: req.error.message };
+    if (!req.data) return { ok: false, error: "Request not found." };
+
+    const a = String((req.data as any).from_user_id);
+    const b = String((req.data as any).to_user_id);
+
+    // Insert friendship (server-side RLS/constraints should prevent duplicates)
+    const ins = await supabase.from("friendships").insert({
+      user_id_a: a,
+      user_id_b: b,
+    });
+
+    if (ins.error) return { ok: false, error: ins.error.message };
+
+    return { ok: true, data: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+export async function declineFriendRequest(
+  requestId: string
+): Promise<BackendResult<true>> {
+  try {
+    const upd = await supabase
+      .from("friend_requests")
+      .update({ status: "declined" })
+      .eq("id", requestId);
+
+    if (upd.error) return { ok: false, error: upd.error.message };
+
+    return { ok: true, data: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Create an activity event when a rank is completed.
+ * Friends-only visibility is enforced by RLS.
+ */
+export async function createRankCompletedEvent(args: {
+  actorUserId: string;
+  tmdbId: number;
+  showTitle: string;
+  posterPath?: string | null;
+  year?: string | null;
+  rankPosition?: number | null;
+  derivedRating?: number | null;
+}): Promise<BackendResult<true>> {
+  try {
+    const res = await supabase.from("activity_events").insert({
+      actor_user_id: args.actorUserId,
+      event_type: "rank_completed",
+      tmdb_id: args.tmdbId,
+      show_title: args.showTitle,
+      poster_path: args.posterPath ?? null,
+      year: args.year ?? null,
+      rank_position: args.rankPosition ?? null,
+      derived_rating: args.derivedRating ?? null,
+    });
+
+    if (res.error) return { ok: false, error: res.error.message };
+
+    return { ok: true, data: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Load a friends-only feed.
+ * RLS should allow: your own events + your friends' events.
+ */
+export async function loadFriendsFeed(
+  userId: string,
+  limit = 50
+): Promise<BackendResult<ActivityEventRow[]>> {
+  try {
+    // NOTE: We include userId just for consistency; RLS enforces access.
+    void userId;
+
+    const res = await supabase
+      .from("activity_events")
+      .select(
+        "id, actor_user_id, event_type, tmdb_id, show_title, poster_path, year, rank_position, derived_rating, created_at"
+      )
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (res.error) return { ok: false, error: res.error.message };
+
+    const rows: ActivityEventRow[] = (res.data ?? []).map((r: any) => ({
+      id: String(r.id),
+      actorUserId: String(r.actor_user_id),
+      eventType: r.event_type,
+      tmdbId: typeof r.tmdb_id === "number" ? r.tmdb_id : Number(r.tmdb_id),
+      showTitle: String(r.show_title ?? ""),
+      posterPath: typeof r.poster_path === "string" ? r.poster_path : null,
+      year: typeof r.year === "string" ? r.year : r.year != null ? String(r.year) : null,
+      rankPosition:
+        typeof r.rank_position === "number" ? r.rank_position : r.rank_position != null ? Number(r.rank_position) : null,
+      derivedRating:
+        typeof r.derived_rating === "number" ? r.derived_rating : r.derived_rating != null ? Number(r.derived_rating) : null,
+      createdAt: String(r.created_at),
+    }));
+
+    return { ok: true, data: rows };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

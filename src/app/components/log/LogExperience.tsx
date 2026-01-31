@@ -18,7 +18,7 @@ import {
   removeFromWantToWatchByTmdbId,
 } from "@/core/storage/wantToWatchStorage";
 import { safeGetWantToWatch } from "@/core/storage/wantToWatchStorage";
-import { saveToBackend } from "@/core/storage/backendSync";
+import { createRankCompletedEvent, saveToBackend } from "@/core/storage/backendSync";
 import { supabase } from "@/lib/supabaseClient";
 
 
@@ -172,6 +172,31 @@ export default function LogExperience() {
     if (index !== -1) {
       params.set("rank", String(index + 1));
       params.set("rating", String(nextRanked[index].rating));
+
+      // Create a friends-feed activity event (best-effort, only if signed in)
+      void (async () => {
+        try {
+          const sessionRes = await supabase.auth.getSession();
+          const user = sessionRes.data.session?.user ?? null;
+          if (!user) return;
+
+          const rankedShow = nextRanked[index];
+          const tmdbId = (rankedShow as any)?.tmdbId;
+          if (typeof tmdbId !== "number" || !Number.isFinite(tmdbId)) return;
+
+          await createRankCompletedEvent({
+            actorUserId: user.id,
+            tmdbId,
+            showTitle: rankedShow.title,
+            posterPath: (rankedShow as any)?.posterPath ?? null,
+            year: (rankedShow as any)?.year ?? null,
+            rankPosition: index + 1,
+            derivedRating: rankedShow.rating,
+          });
+        } catch {
+          // ignore (best-effort)
+        }
+      })();
     }
 
     // Once ranked, remove from Want to Watch (prefer tmdbId when available)

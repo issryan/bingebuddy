@@ -149,6 +149,7 @@ export default function RootLayout({
     pathname === href || (href !== "/" && pathname?.startsWith(href + "/"));
 
   const isLoginPage = pathname === "/login";
+  const isUsernamePage = pathname === "/onboarding/username";
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
 
@@ -168,10 +169,42 @@ export default function RootLayout({
       setIsAuthed(has);
       setAuthChecked(true);
 
+      // If authed, require a username before using the app.
+      if (has) {
+        try {
+          const prof = await supabase
+            .from("profiles")
+            .select("username")
+            .eq("user_id", userId)
+            .maybeSingle();
+
+          const hasUsername = !!prof.data?.username;
+
+          // If missing username/profile, force onboarding.
+          if (!hasUsername && !isUsernamePage) {
+            router.replace("/onboarding/username");
+            return;
+          }
+
+          // If user already has username and is on onboarding, send them into the app.
+          if (hasUsername && isUsernamePage) {
+            router.replace("/log");
+            return;
+          }
+        } catch {
+          // If something goes wrong, be safe and route to onboarding.
+          if (!isUsernamePage) {
+            router.replace("/onboarding/username");
+            return;
+          }
+        }
+      }
+
       if (!has && !isLoginPage) {
         router.replace("/login");
       }
 
+      // If authed and on login, send into app (unless onboarding is required above).
       if (has && isLoginPage) {
         router.replace("/log");
       }
@@ -187,7 +220,7 @@ export default function RootLayout({
       alive = false;
       sub.subscription.unsubscribe();
     };
-  }, [router, isLoginPage]);
+  }, [router, isLoginPage, isUsernamePage]);
 
   return (
     <html lang="en">
