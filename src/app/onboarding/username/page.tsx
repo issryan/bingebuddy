@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/core/storage/supabaseClient";
+import { supabase } from "../../../core/storage/supabaseClient";
 import { upsertUsername } from "@/core/storage/backendSync";
 
 export default function UsernameOnboardingPage() {
