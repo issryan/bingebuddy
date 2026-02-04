@@ -32,6 +32,40 @@ export default function AuthClient() {
     };
   }, [router]);
 
+  async function ensureProfileAndRoute() {
+    const { data: auth } = await supabase.auth.getUser();
+    const user = auth.user;
+
+    if (!user) return;
+
+    // 1) Ensure a profiles row exists for this user
+    // (If it already exists, this does nothing.)
+    await supabase.from("profiles").upsert(
+      {
+        user_id: user.id,
+        // Optional: store email if your table has it (safe to omit otherwise)
+        // email: user.email,
+      },
+      { onConflict: "user_id" }
+    );
+
+    // 2) Check if username exists
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("username")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    const username = (profile?.username ?? "").trim();
+
+    // 3) Route
+    if (!username) {
+      router.push("/onboarding");
+    } else {
+      router.push("/log");
+    }
+  }
+
   async function signUp() {
     setMessage(null);
     if (!email.trim() || !password.trim()) {
@@ -40,7 +74,7 @@ export default function AuthClient() {
     }
 
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
     });
@@ -51,9 +85,20 @@ export default function AuthClient() {
       return;
     }
 
-    setMessage("Account created. You’re signed in.");
     setEmail("");
     setPassword("");
+
+    // Important: depending on Supabase settings, signUp may require email confirmation
+    // and NOT create a session immediately.
+    const hasSession = !!data.session;
+
+    if (!hasSession) {
+      setMessage("Account created. Check your email to confirm, then sign in.");
+      return;
+    }
+
+    setMessage("Account created. Finishing setup…");
+    await ensureProfileAndRoute();
   }
 
   async function signIn() {
@@ -75,9 +120,11 @@ export default function AuthClient() {
       return;
     }
 
-    setMessage("Signed in.");
+    setMessage("Signed in. Finishing setup…");
     setEmail("");
     setPassword("");
+
+    await ensureProfileAndRoute();
   }
 
   async function signOut() {
@@ -92,6 +139,7 @@ export default function AuthClient() {
     }
 
     setMessage("Signed out.");
+    router.push("/login");
   }
 
   return (
@@ -157,7 +205,7 @@ export default function AuthClient() {
       {message ? <div className="text-sm text-white/70">{message}</div> : null}
 
       <div className="text-xs text-white/40">
-        This is only for syncing your data. No social features yet.
+        This is only for syncing your data. Social setup happens next.
       </div>
     </div>
   );

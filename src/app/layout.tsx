@@ -258,7 +258,9 @@ export default function RootLayout({
     pathname === href || (href !== "/" && pathname?.startsWith(href + "/"));
 
   const isLoginPage = pathname === "/login";
-  const isUsernamePage = pathname === "/onboarding/username";
+  const isOnboardingPage = pathname === "/onboarding";
+  const isUsernamePage = pathname === "/onboarding";
+
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
 
@@ -291,7 +293,7 @@ export default function RootLayout({
 
           // If missing username/profile, force onboarding.
           if (!hasUsername && !isUsernamePage) {
-            router.replace("/onboarding/username");
+            router.replace("/onboarding");
             return;
           }
 
@@ -303,7 +305,7 @@ export default function RootLayout({
         } catch {
           // If something goes wrong, be safe and route to onboarding.
           if (!isUsernamePage) {
-            router.replace("/onboarding/username");
+            router.replace("/onboarding");
             return;
           }
         }
@@ -329,12 +331,12 @@ export default function RootLayout({
       alive = false;
       sub.subscription.unsubscribe();
     };
-  }, [router, isLoginPage, isUsernamePage]);
+  }, [router, isLoginPage, isOnboardingPage, isUsernamePage]);
 
   return (
     <html lang="en">
       <body className="min-h-screen bg-black text-white">
-        {isLoginPage ? (
+        {isLoginPage || isOnboardingPage ? (
           <main className="mx-auto w-full max-w-3xl px-4 py-6">
             {children}
           </main>
