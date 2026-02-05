@@ -1,5 +1,5 @@
 // src/app/onboarding/page.tsx
-import OnboardingClient from "./OnboardingCLient";
+import OnboardingClient from "./OnboardingClient";
 
 export default function OnboardingPage() {
   return (

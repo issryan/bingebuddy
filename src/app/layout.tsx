@@ -1,4 +1,5 @@
 "use client";
+
 import "./globals.css";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -84,17 +85,14 @@ function IconProfile({ active }: { active: boolean }) {
   );
 }
 
-function IconSearch({ active }: { active: boolean }) {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={active ? "text-white" : "text-white/50"}>
-      <path d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" stroke="currentColor" strokeWidth="2" />
-      <path d="M16.5 16.5 21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
-}
 type SearchMode = "all" | "shows" | "users";
-
-type SearchShowResult = { kind: "show"; tmdbId: number; title: string; year: string | null; posterPath: string | null };
+type SearchShowResult = {
+  kind: "show";
+  tmdbId: number;
+  title: string;
+  year: string | null;
+  posterPath: string | null;
+};
 type SearchUserResult = { kind: "user"; username: string };
 type SearchResult = SearchShowResult | SearchUserResult;
 
@@ -109,7 +107,8 @@ function GlobalSearchBar({ compact }: { compact?: boolean }) {
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
-      if (ref.current && e.target instanceof Node && !ref.current.contains(e.target)) setOpen(false);
+      if (ref.current && e.target instanceof Node && !ref.current.contains(e.target))
+        setOpen(false);
     }
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
@@ -118,7 +117,10 @@ function GlobalSearchBar({ compact }: { compact?: boolean }) {
   useEffect(() => {
     if (!open) return;
     const clean = q.trim();
-    if (clean.length < 2) { setResults([]); return; }
+    if (clean.length < 2) {
+      setResults([]);
+      return;
+    }
 
     let alive = true;
     const t = setTimeout(async () => {
@@ -130,11 +132,20 @@ function GlobalSearchBar({ compact }: { compact?: boolean }) {
           const r = await fetch(`/api/tmdb/search?query=${encodeURIComponent(clean)}`);
           if (r.ok) {
             const j = await r.json();
-            (j.results ?? []).slice(0,5).forEach((s:any) => {
-              if (Number.isFinite(s.tmdbId)) next.push({ kind: "show", tmdbId: s.tmdbId, title: s.title, year: s.year ?? null, posterPath: s.posterPath ?? null });
-            });
+            (j.results ?? [])
+              .slice(0, 5)
+              .forEach((s: any) => {
+                if (Number.isFinite(s.tmdbId))
+                  next.push({
+                    kind: "show",
+                    tmdbId: s.tmdbId,
+                    title: s.title,
+                    year: s.year ?? null,
+                    posterPath: s.posterPath ?? null,
+                  });
+              });
           }
-        } catch {}
+        } catch { }
       }
 
       if (mode !== "shows") {
@@ -142,9 +153,11 @@ function GlobalSearchBar({ compact }: { compact?: boolean }) {
           const r = await fetch(`/api/users/search?query=${encodeURIComponent(clean)}`);
           if (r.ok) {
             const j = await r.json();
-            (j.results ?? []).slice(0,5).forEach((u:any) => next.push({ kind: "user", username: u.username }));
+            (j.results ?? [])
+              .slice(0, 5)
+              .forEach((u: any) => next.push({ kind: "user", username: u.username }));
           }
-        } catch {}
+        } catch { }
       }
 
       if (!alive) return;
@@ -152,11 +165,15 @@ function GlobalSearchBar({ compact }: { compact?: boolean }) {
       setLoading(false);
     }, 250);
 
-    return () => { alive = false; clearTimeout(t); };
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
   }, [q, mode, open]);
 
   function goFull() {
-    const clean = q.trim(); if (!clean) return;
+    const clean = q.trim();
+    if (!clean) return;
     router.push(`/search?q=${encodeURIComponent(clean)}&type=${mode}`);
     setOpen(false);
   }
@@ -170,8 +187,21 @@ function GlobalSearchBar({ compact }: { compact?: boolean }) {
   return (
     <div ref={ref} className="relative">
       <div className="flex gap-2">
-        <input value={q} onChange={e=>setQ(e.target.value)} onFocus={()=>setOpen(true)} onKeyDown={e=>{ if(e.key==='Enter') goFull(); }} placeholder="Search shows or friends" className="flex-1 rounded-2xl bg-white/5 border border-white/10 px-4 py-3" />
-        <select value={mode} onChange={e=>setMode(e.target.value as SearchMode)} className="rounded-2xl bg-white/5 border border-white/10 px-3 py-2 text-sm">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") goFull();
+          }}
+          placeholder="Search shows or friends"
+          className="flex-1 rounded-2xl bg-white/5 border border-white/10 px-4 py-3"
+        />
+        <select
+          value={mode}
+          onChange={(e) => setMode(e.target.value as SearchMode)}
+          className="rounded-2xl bg-white/5 border border-white/10 px-3 py-2 text-sm"
+        >
           <option value="all">All</option>
           <option value="shows">Shows</option>
           <option value="users">Users</option>
@@ -180,13 +210,28 @@ function GlobalSearchBar({ compact }: { compact?: boolean }) {
 
       {open && (
         <div className="absolute z-50 mt-2 w-full rounded-2xl border border-white/15 bg-black/95">
-          <div className="px-4 py-2 text-xs text-white/60">{loading ? "Searching…" : "Top results"}</div>
-          {results.map((r,i)=>(
-            <button key={i} onClick={()=>pick(r)} className="w-full text-left px-4 py-3 hover:bg-white/10">
-              {r.kind === "show" ? `${r.title}${r.year ? ` (${r.year})` : ''}` : `@${r.username}`}
+          <div className="px-4 py-2 text-xs text-white/60">
+            {loading ? "Searching…" : "Top results"}
+          </div>
+          {results.map((r, i) => (
+            <button
+              key={i}
+              onClick={() => pick(r)}
+              className="w-full text-left px-4 py-3 hover:bg-white/10"
+            >
+              {r.kind === "show"
+                ? `${r.title}${r.year ? ` (${r.year})` : ""}`
+                : `@${r.username}`}
             </button>
           ))}
-          {q.trim() && <button onClick={goFull} className="w-full px-4 py-2 text-sm text-white/70 hover:bg-white/10">See all results →</button>}
+          {q.trim() && (
+            <button
+              onClick={goFull}
+              className="w-full px-4 py-2 text-sm text-white/70 hover:bg-white/10"
+            >
+              See all results →
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -239,18 +284,20 @@ function MobileNavItem({
       }
     >
       {icon}
-      <span className={active ? "text-[11px] font-semibold text-white" : "text-[11px] font-medium text-white/60"}>
+      <span
+        className={
+          active
+            ? "text-[11px] font-semibold text-white"
+            : "text-[11px] font-medium text-white/60"
+        }
+      >
         {label}
       </span>
     </Link>
   );
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -259,7 +306,6 @@ export default function RootLayout({
 
   const isLoginPage = pathname === "/login";
   const isOnboardingPage = pathname === "/onboarding";
-  const isUsernamePage = pathname === "/onboarding";
 
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
@@ -274,14 +320,28 @@ export default function RootLayout({
       const userId = data.session?.user?.id ?? null;
       const has = !!userId;
 
-      // IMPORTANT: scope localStorage to the signed-in user (or guest when signed out)
+      // scope localStorage to the signed-in user (or guest when signed out)
       setActiveUserId(userId);
 
       setIsAuthed(has);
       setAuthChecked(true);
 
-      // If authed, require a username before using the app.
-      if (has) {
+      // Not authed: only allow /login
+      if (!has) {
+        if (!isLoginPage) router.replace("/login");
+        return;
+      }
+
+      // Authed: check username
+      let hasUsername = false;
+      try {
+        const prof = await supabase
+          .from("profiles")
+          .select("username")
+          .eq("user_id", userId)
+          .maybeSingle();
+        // Authed: check username
+        let hasUsername = false;
         try {
           const prof = await supabase
             .from("profiles")
@@ -289,35 +349,33 @@ export default function RootLayout({
             .eq("user_id", userId)
             .maybeSingle();
 
-          const hasUsername = !!prof.data?.username;
-
-          // If missing username/profile, force onboarding.
-          if (!hasUsername && !isUsernamePage) {
-            router.replace("/onboarding");
-            return;
-          }
-
-          // If user already has username and is on onboarding, send them into the app.
-          if (hasUsername && isUsernamePage) {
-            router.replace("/log");
-            return;
-          }
+          const uname = (prof.data?.username ?? "").trim();
+          const isPlaceholder = /^user_[a-z0-9]+$/i.test(uname);
+          hasUsername = !!uname && !isPlaceholder;
+          
         } catch {
-          // If something goes wrong, be safe and route to onboarding.
-          if (!isUsernamePage) {
-            router.replace("/onboarding");
-            return;
-          }
+          hasUsername = false;
         }
+
+        // If missing username, force /onboarding (but don't loop)
+        if (!hasUsername) {
+          if (!isOnboardingPage) router.replace("/onboarding");
+          return;
+        }
+
+        // If they DO have username, keep them out of onboarding/login
+        if (isOnboardingPage || isLoginPage) {
+          router.replace("/log");
+          return;
+        }
+      } catch {
+        hasUsername = false;
       }
 
-      if (!has && !isLoginPage) {
-        router.replace("/login");
-      }
-
-      // If authed and on login, send into app (unless onboarding is required above).
-      if (has && isLoginPage) {
+      // If they DO have username, keep them out of onboarding/login
+      if (isOnboardingPage || isLoginPage) {
         router.replace("/log");
+        return;
       }
     }
 
@@ -331,15 +389,13 @@ export default function RootLayout({
       alive = false;
       sub.subscription.unsubscribe();
     };
-  }, [router, isLoginPage, isOnboardingPage, isUsernamePage]);
+  }, [router, isLoginPage, isOnboardingPage]);
 
   return (
     <html lang="en">
       <body className="min-h-screen bg-black text-white">
         {isLoginPage || isOnboardingPage ? (
-          <main className="mx-auto w-full max-w-3xl px-4 py-6">
-            {children}
-          </main>
+          <main className="mx-auto w-full max-w-3xl px-4 py-6">{children}</main>
         ) : !authChecked ? (
           <main className="min-h-screen flex items-center justify-center px-6">
             <div className="text-sm text-white/60">Loading…</div>
@@ -367,7 +423,7 @@ export default function RootLayout({
               </div>
             </header>
 
-            {/* Content (extra bottom padding on mobile for bottom nav) */}
+            {/* Content */}
             <main className="mx-auto w-full max-w-3xl px-4 py-6 pb-24 md:pb-6">
               <div className="md:hidden mb-5">
                 <GlobalSearchBar />
@@ -377,8 +433,7 @@ export default function RootLayout({
 
             {/* Mobile / bottom nav */}
             <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/90 backdrop-blur">
-              <div className="mx-auto w-full max-w-3xl px-4 py-3 grid grid-cols-4 gap-2">
-                
+              <div className="mx-auto w-full max-w-3xl px-4 py-3 grid grid-cols-3 gap-2">
                 <MobileNavItem
                   href="/log"
                   label="Log"
