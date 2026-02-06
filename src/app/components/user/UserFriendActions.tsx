@@ -16,6 +16,16 @@ type Status =
   | "outgoing_pending"
   | "incoming_pending";
 
+function pair(me: string, other: string) {
+  const low = me < other ? me : other;
+  const high = me < other ? other : me;
+  return { low, high };
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
 export default function UserFriendActions({ targetUserId, targetUsername }: Props) {
   const [status, setStatus] = useState<Status>("loading");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -44,13 +54,14 @@ export default function UserFriendActions({ targetUserId, targetUsername }: Prop
     }
 
     // 1) Are we already friends?
-    // We support either one-row or two-row friendship storage by checking both directions.
+    // Friendships are stored as a single row with (user_low, user_high)
+    const { low, high } = pair(me, targetUserId);
+
     const { data: friendRows } = await supabase
       .from("friendships")
-      .select("id,user_id,friend_user_id")
-      .or(
-        `and(user_id.eq.${me},friend_user_id.eq.${targetUserId}),and(user_id.eq.${targetUserId},friend_user_id.eq.${me})`
-      )
+      .select("user_low,user_high")
+      .eq("user_low", low)
+      .eq("user_high", high)
       .limit(1);
 
     if ((friendRows ?? []).length > 0) {
@@ -61,9 +72,10 @@ export default function UserFriendActions({ targetUserId, targetUsername }: Prop
     // 2) Is there a pending outgoing request?
     const { data: outReq } = await supabase
       .from("friend_requests")
-      .select("id")
-      .eq("sender_user_id", me)
-      .eq("receiver_user_id", targetUserId)
+      .select("id,status")
+      .eq("from_user_id", me)
+      .eq("to_user_id", targetUserId)
+      .eq("status", "pending")
       .limit(1);
 
     if ((outReq ?? []).length > 0) {
@@ -74,9 +86,10 @@ export default function UserFriendActions({ targetUserId, targetUsername }: Prop
     // 3) Is there a pending incoming request?
     const { data: inReq } = await supabase
       .from("friend_requests")
-      .select("id")
-      .eq("sender_user_id", targetUserId)
-      .eq("receiver_user_id", me)
+      .select("id,status")
+      .eq("from_user_id", targetUserId)
+      .eq("to_user_id", me)
+      .eq("status", "pending")
       .limit(1);
 
     if ((inReq ?? []).length > 0) {
@@ -100,8 +113,9 @@ export default function UserFriendActions({ targetUserId, targetUsername }: Prop
       setError(null);
 
       await supabase.from("friend_requests").insert({
-        sender_user_id: currentUserId,
-        receiver_user_id: targetUserId,
+        from_user_id: currentUserId,
+        to_user_id: targetUserId,
+        status: "pending",
       });
 
       await refresh();
@@ -119,16 +133,15 @@ export default function UserFriendActions({ targetUserId, targetUsername }: Prop
       setBusy(true);
       setError(null);
 
-      // create friendship(s)
-      // If your schema expects one row, the first insert is enough.
-      // If it expects two rows, this covers it.
-      await supabase.from("friendships").insert([
-        { user_id: currentUserId, friend_user_id: targetUserId },
-        { user_id: targetUserId, friend_user_id: currentUserId },
-      ]);
+      // create friendship (single-row, ordered pair)
+      const { low, high } = pair(currentUserId, targetUserId);
+      await supabase.from("friendships").insert({ user_low: low, user_high: high });
 
-      // delete request
-      await supabase.from("friend_requests").delete().eq("id", incomingRequestId);
+      // mark request accepted
+      await supabase
+        .from("friend_requests")
+        .update({ status: "accepted", responded_at: nowIso() })
+        .eq("id", incomingRequestId);
 
       await refresh();
     } catch {
@@ -145,7 +158,10 @@ export default function UserFriendActions({ targetUserId, targetUsername }: Prop
       setBusy(true);
       setError(null);
 
-      await supabase.from("friend_requests").delete().eq("id", incomingRequestId);
+      await supabase
+        .from("friend_requests")
+        .update({ status: "declined", responded_at: nowIso() })
+        .eq("id", incomingRequestId);
 
       await refresh();
     } catch {
