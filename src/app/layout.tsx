@@ -352,7 +352,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           const uname = (prof.data?.username ?? "").trim();
           const isPlaceholder = /^user_[a-z0-9]+$/i.test(uname);
           hasUsername = !!uname && !isPlaceholder;
-          
+
         } catch {
           hasUsername = false;
         }
@@ -365,7 +365,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         // If they DO have username, keep them out of onboarding/login
         if (isOnboardingPage || isLoginPage) {
-          router.replace("/log");
+          router.replace("/feed");;
           return;
         }
       } catch {
@@ -374,7 +374,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
       // If they DO have username, keep them out of onboarding/login
       if (isOnboardingPage || isLoginPage) {
-        router.replace("/log");
+        router.replace("/feed");
         return;
       }
     }
@@ -409,14 +409,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {/* Desktop / top nav */}
             <header className="hidden md:block border-b border-white/10">
               <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-                <Link href="/log" className="text-lg font-semibold">
-                  BingeBuddy
+                <Link href="/feed" className="text-lg font-semibold">                  BingeBuddy
                 </Link>
                 <div className="hidden md:block w-[360px]">
                   <GlobalSearchBar />
                 </div>
                 <nav className="flex flex-wrap gap-1">
-                  <DesktopNavLink href="/log" label="Log" active={isActive("/log")} />
+                  <DesktopNavLink href="/feed" label="Feed" active={isActive("/feed")} />
                   <DesktopNavLink href="/my-list" label="My List" active={isActive("/my-list")} />
                   <DesktopNavLink href="/profile" label="Profile" active={isActive("/profile")} />
                 </nav>
@@ -435,10 +434,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/90 backdrop-blur">
               <div className="mx-auto w-full max-w-3xl px-4 py-3 grid grid-cols-3 gap-2">
                 <MobileNavItem
-                  href="/log"
-                  label="Log"
-                  active={isActive("/log")}
-                  icon={<IconLog active={isActive("/log")} />}
+                  href="/feed"
+                  label="Feed"
+                  active={isActive("/feed")}
+                  icon={<IconLog active={isActive("/feed")} />}
                 />
                 <MobileNavItem
                   href="/my-list"

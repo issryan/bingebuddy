@@ -164,7 +164,7 @@ export default function SearchPage() {
     }
 
     function goRank(tmdbId: number) {
-        router.push(`/log?tmdbId=${tmdbId}&auto=1`);
+        router.push(`/rank?tmdbId=${tmdbId}&auto=1`);
     }
 
     return (

@@ -519,13 +519,15 @@ export async function createRankCompletedEvent(args: {
  */
 export async function loadFriendsFeed(
   userId: string,
-  limit = 50
+  opts?: { limit?: number; before?: string }
 ): Promise<BackendResult<ActivityEventRow[]>> {
   try {
-    // NOTE: We include userId just for consistency; RLS enforces access.
     void userId;
 
-    const res = await supabase
+    const limit = opts?.limit ?? 30;
+    const before = opts?.before;
+
+    let q = supabase
       .from("activity_events")
       .select(
         "id, actor_user_id, event_type, tmdb_id, show_title, poster_path, year, rank_position, derived_rating, created_at"
@@ -533,6 +535,12 @@ export async function loadFriendsFeed(
       .order("created_at", { ascending: false })
       .limit(limit);
 
+    // Cursor pagination: fetch older than the last item we have
+    if (before) {
+      q = q.lt("created_at", before);
+    }
+
+    const res = await q;
     if (res.error) return { ok: false, error: res.error.message };
 
     const rows: ActivityEventRow[] = (res.data ?? []).map((r: any) => ({
@@ -544,9 +552,17 @@ export async function loadFriendsFeed(
       posterPath: typeof r.poster_path === "string" ? r.poster_path : null,
       year: typeof r.year === "string" ? r.year : r.year != null ? String(r.year) : null,
       rankPosition:
-        typeof r.rank_position === "number" ? r.rank_position : r.rank_position != null ? Number(r.rank_position) : null,
+        typeof r.rank_position === "number"
+          ? r.rank_position
+          : r.rank_position != null
+          ? Number(r.rank_position)
+          : null,
       derivedRating:
-        typeof r.derived_rating === "number" ? r.derived_rating : r.derived_rating != null ? Number(r.derived_rating) : null,
+        typeof r.derived_rating === "number"
+          ? r.derived_rating
+          : r.derived_rating != null
+          ? Number(r.derived_rating)
+          : null,
       createdAt: String(r.created_at),
     }));
 

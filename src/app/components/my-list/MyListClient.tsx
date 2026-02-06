@@ -271,7 +271,7 @@ export default function MyListClient() {
 
                               // Ensure backend knows this item still exists before ranking flow mutates it
                               await saveSnapshotToCloud();
-                              router.push(`/log?${params.toString()}`);
+                              router.push(`/rank?${params.toString()}`);
                             }}
                             className="shrink-0 rounded-xl bg-white text-black font-medium px-3 py-2 text-sm"
                           >
