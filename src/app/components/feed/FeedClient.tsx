@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { loadFriendsFeed } from "@/core/storage/backendSync";
+import { ratingForIndex } from "@/core/logic/rating";
 
 const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
 const PAGE_SIZE = 30;
@@ -26,6 +27,12 @@ function timeAgo(iso: string) {
   return `${d}d ago`;
 }
 
+function ratingTextClass(rating: number): string {
+  if (rating >= 7) return "text-emerald-300";
+  if (rating >= 4) return "text-yellow-300";
+  return "text-red-300";
+}
+
 export default function FeedClient() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -37,6 +44,7 @@ export default function FeedClient() {
   const [hasMore, setHasMore] = useState(true);
 
   const [usernamesById, setUsernamesById] = useState<Record<string, string>>({});
+  const [currentRatingByKey, setCurrentRatingByKey] = useState<Record<string, number>>({});
 
   async function loadActorUsernames(rows: any[]) {
     const ids = Array.from(new Set(rows.map((r) => r.actorUserId).filter(Boolean)));
@@ -56,6 +64,65 @@ export default function FeedClient() {
       }
       return next;
     });
+  }
+
+  async function loadCurrentRatings(rows: any[]) {
+    // Build a set of (actorUserId -> tmdbIds) so we can query ranked_shows.
+    const byActor = new Map<string, number[]>();
+
+    for (const r of rows) {
+      const actor = String((r as any).actorUserId ?? "");
+      const tmdbId = Number((r as any).tmdbId);
+      if (!actor || !Number.isFinite(tmdbId)) continue;
+
+      const arr = byActor.get(actor) ?? [];
+      arr.push(tmdbId);
+      byActor.set(actor, arr);
+    }
+
+    if (byActor.size === 0) return;
+
+    const nextMap: Record<string, number> = {};
+
+    // Query per actor: get rank_position for the relevant tmdb ids AND the total ranked count.
+    for (const [actorUserId, tmdbIdsRaw] of byActor.entries()) {
+      const tmdbIds = Array.from(new Set(tmdbIdsRaw));
+
+      const [ranksRes, countRes] = await Promise.all([
+        supabase
+          .from("ranked_shows")
+          .select("tmdb_id, rank_position")
+          .eq("user_id", actorUserId)
+          .in("tmdb_id", tmdbIds),
+        supabase
+          .from("ranked_shows")
+          .select("tmdb_id", { count: "exact", head: true })
+          .eq("user_id", actorUserId),
+      ]);
+
+      if (ranksRes.error) continue;
+
+      const total = typeof countRes.count === "number" ? countRes.count : 0;
+      if (total <= 0) continue;
+
+      for (const row of ranksRes.data ?? []) {
+        const id =
+          typeof (row as any).tmdb_id === "number"
+            ? (row as any).tmdb_id
+            : Number((row as any).tmdb_id);
+        const pos =
+          typeof (row as any).rank_position === "number"
+            ? (row as any).rank_position
+            : Number((row as any).rank_position);
+
+        if (Number.isFinite(id) && Number.isFinite(pos)) {
+          // ratingForIndex expects 0-based index and total
+          nextMap[`${actorUserId}:${id}`] = ratingForIndex(pos, total);
+        }
+      }
+    }
+
+    setCurrentRatingByKey(nextMap);
   }
 
   async function refresh() {
@@ -84,6 +151,7 @@ export default function FeedClient() {
     setHasMore(rows.length === PAGE_SIZE);
 
     await loadActorUsernames(rows);
+    await loadCurrentRatings(rows);
 
     setLoading(false);
   }
@@ -125,6 +193,7 @@ export default function FeedClient() {
     setHasMore(rows.length === targetCount);
 
     await loadActorUsernames(rows);
+    await loadCurrentRatings(rows);
 
     setLoadingMore(false);
   }
@@ -174,7 +243,8 @@ export default function FeedClient() {
         {visibleEvents.map((e) => {
           const username = usernamesById[e.actorUserId] || "user";
           const img = posterUrl(e.posterPath, "w92");
-          const rating = typeof e.derivedRating === "number" ? e.derivedRating : null;
+          const key = `${e.actorUserId}:${e.tmdbId}`;
+          const currentRating = typeof currentRatingByKey[key] === "number" ? currentRatingByKey[key] : null;
 
           return (
             <div
@@ -215,12 +285,14 @@ export default function FeedClient() {
                 </div>
               </button>
 
-              {rating !== null ? (
+              {currentRating !== null ? (
                 <div
                   className="shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-full border border-white/20 bg-white/5 text-sm font-semibold"
-                  title={`Rating ${rating.toFixed(1)}`}
+                  title={`Current rating ${currentRating.toFixed(1)}`}
                 >
-                  {rating.toFixed(1)}
+                  <span className={ratingTextClass(currentRating)}>
+                    {currentRating.toFixed(1)}
+                  </span>
                 </div>
               ) : null}
             </div>
