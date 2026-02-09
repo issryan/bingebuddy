@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getRankedShows, getState, reorderShows } from "@/core/logic/state";
 import RankedDragList from "./RankedDragList";
 import { safeGetWantToWatch, type WantToWatchItem } from "@/core/storage/wantToWatchStorage";
@@ -34,6 +34,7 @@ function tabClass(active: boolean): string {
 
 export default function MyListClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [ranked, setRanked] = useState(() => getRankedShows(getState()));
   const [wantToWatch, setWantToWatch] = useState<WantToWatchItem[]>([]);
@@ -41,6 +42,13 @@ export default function MyListClient() {
 
   type TabKey = "ranked" | "watch" | "recs";
   const [activeTab, setActiveTab] = useState<TabKey>("ranked");
+
+  function getTabFromQuery(): TabKey {
+    const raw = (searchParams.get("tab") ?? "").toLowerCase();
+    if (raw === "watch") return "watch";
+    if (raw === "recs") return "recs";
+    return "ranked";
+  }
 
   async function saveSnapshotToCloud(): Promise<void> {
     try {
@@ -64,6 +72,13 @@ export default function MyListClient() {
     setWantToWatch(safeGetWantToWatch());
   }, []);
 
+  useEffect(() => {
+    const next = getTabFromQuery();
+    setActiveTab(next);
+    if (next !== "ranked") setIsReorderMode(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
@@ -71,7 +86,9 @@ export default function MyListClient() {
           type="button"
           className={tabClass(activeTab === "ranked")}
           onClick={() => {
+            setIsReorderMode(false);
             setActiveTab("ranked");
+            router.replace("/my-list");
           }}
         >
           Ranked
@@ -83,6 +100,7 @@ export default function MyListClient() {
           onClick={() => {
             setIsReorderMode(false);
             setActiveTab("watch");
+            router.replace("/my-list?tab=watch");
           }}
         >
           Want to Watch
@@ -94,6 +112,7 @@ export default function MyListClient() {
           onClick={() => {
             setIsReorderMode(false);
             setActiveTab("recs");
+            router.replace("/my-list?tab=recs");
           }}
         >
           Recs

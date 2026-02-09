@@ -9,10 +9,6 @@ export default function ProfilePage() {
         <h1 className="text-2xl font-semibold">Profile</h1>
         <p className="mt-1 text-white/70">Your stats and account.</p>
       </div>
-
-      {/* Account (sign out lives here) */}
-      <AuthClient />
-
       {/* Stats */}
       <ProfileClient />
     </div>

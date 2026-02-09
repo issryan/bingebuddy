@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { getRankedShows, getState, setState } from "@/core/logic/state";
 import { supabase } from "@/lib/supabaseClient";
@@ -29,6 +29,7 @@ function formatShortDate(ms: number): string {
   }
 }
 
+
 function formatMonthYear(dateLike: string | number): string {
   try {
     const d = typeof dateLike === "string" ? new Date(dateLike) : new Date(dateLike);
@@ -36,6 +37,13 @@ function formatMonthYear(dateLike: string | number): string {
   } catch {
     return "";
   }
+}
+
+function ratingTextClass(rating: number | null): string {
+  if (rating === null || !Number.isFinite(rating)) return "text-white/70";
+  if (rating >= 7) return "text-green-400";
+  if (rating >= 4) return "text-yellow-300";
+  return "text-red-400";
 }
 
 function migratedFlagKey(userId: string): string {
@@ -114,6 +122,19 @@ export default function ProfileClient() {
   >([]);
   const [myEventsLoading, setMyEventsLoading] = useState(false);
   const [myEventsError, setMyEventsError] = useState<string | null>(null);
+
+  // Always show the *current* derived rating from the live ranked list
+  const ratingByTmdbId = useMemo(() => {
+    const ranked = getRankedShows(getState());
+    const map = new Map<number, number>();
+    for (const s of ranked as any[]) {
+      const id = typeof s.tmdbId === "number" ? s.tmdbId : null;
+      if (id !== null && Number.isFinite(id)) {
+        map.set(id, s.rating);
+      }
+    }
+    return map;
+  }, [rankedCount]);
 
   function recomputeStatsFromLocal() {
     const ranked = getRankedShows(getState());
@@ -396,14 +417,22 @@ export default function ProfileClient() {
             <div className="text-2xl font-semibold">{friendsCount}</div>
             <div className="mt-1 text-xs text-white/50">Friends</div>
           </Link>
-          <div className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center">
+
+          <Link
+            href="/my-list"
+            className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center hover:bg-white/[0.06] transition"
+          >
             <div className="text-2xl font-semibold">{rankedCount}</div>
             <div className="mt-1 text-xs text-white/50">Ranked</div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center">
+          </Link>
+
+          <Link
+            href="/my-list?tab=watch"
+            className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center hover:bg-white/[0.06] transition"
+          >
             <div className="text-2xl font-semibold">{wantToWatchCount}</div>
             <div className="mt-1 text-xs text-white/50">Want to watch</div>
-          </div>
+          </Link>
         </div>
 
         {/* Quick buttons row (minimal placeholders) */}
@@ -431,13 +460,15 @@ export default function ProfileClient() {
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
           <div className="text-white/70 text-sm">Top show</div>
           <div className="mt-1 text-lg font-semibold truncate">{topShow ? topShow.title : "—"}</div>
-          <div className="mt-1 text-sm text-white/60">{topShow ? `Rating ${topShow.rating}` : ""}</div>
+          <div className="mt-1 text-sm text-white/60">
+          </div>
         </div>
 
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
           <div className="text-white/70 text-sm">Lowest show</div>
           <div className="mt-1 text-lg font-semibold truncate">{bottomShow ? bottomShow.title : "—"}</div>
-          <div className="mt-1 text-sm text-white/60">{bottomShow ? `Rating ${bottomShow.rating}` : ""}</div>
+          <div className="mt-1 text-sm text-white/60">
+          </div>
         </div>
       </section>
 
@@ -478,7 +509,15 @@ export default function ProfileClient() {
         ) : (
           <div className="mt-4 space-y-2">
             {myEvents.map((e) => {
-              const ratingText = e.derivedRating === null ? "—" : e.derivedRating.toFixed(1);
+              const current = ratingByTmdbId.get(e.tmdbId);
+              const effectiveRating = typeof current === "number" && Number.isFinite(current)
+                ? current
+                : e.derivedRating;
+
+              const ratingText = effectiveRating === null || effectiveRating === undefined
+                ? "—"
+                : effectiveRating.toFixed(1);
+
               const dateLabel = formatShortDate(Date.parse(e.createdAt));
 
               return (
@@ -494,7 +533,7 @@ export default function ProfileClient() {
 
                   <div className="shrink-0">
                     <div className="h-10 w-10 rounded-full border border-white/15 bg-white/5 flex items-center justify-center">
-                      <span className="text-sm font-semibold text-white">{ratingText}</span>
+                      <span className={`text-sm font-semibold ${ratingTextClass(effectiveRating ?? null)}`}>{ratingText}</span>
                     </div>
                   </div>
                 </a>

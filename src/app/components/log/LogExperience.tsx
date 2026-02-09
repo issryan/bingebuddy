@@ -22,7 +22,31 @@ import { createRankCompletedEvent, saveToBackend } from "@/core/storage/backendS
 import { supabase } from "@/lib/supabaseClient";
 
 
+
 const MAX_SKIPS_BEFORE_AUTOPLACE = 5;
+
+const ACTIVITY_EVENT_DEDUPE_PREFIX = "bingebuddy:dedupe:rank_completed:";
+const ACTIVITY_EVENT_DEDUPE_WINDOW_MS = 15_000; // 15s
+
+function shouldEmitRankCompletedEvent(userId: string, tmdbId: number): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const key = `${ACTIVITY_EVENT_DEDUPE_PREFIX}${userId}:${tmdbId}`;
+    const lastRaw = localStorage.getItem(key);
+    const last = lastRaw ? Number(lastRaw) : 0;
+
+    const now = Date.now();
+    if (Number.isFinite(last) && now - last < ACTIVITY_EVENT_DEDUPE_WINDOW_MS) {
+      return false;
+    }
+
+    localStorage.setItem(key, String(now));
+    return true;
+  } catch {
+    // If localStorage is blocked, fall back to emitting.
+    return true;
+  }
+}
 
 function notifyStateChanged() {
   // Used by the Supabase sync layer (and any other listeners) to persist changes.
@@ -183,6 +207,8 @@ export default function LogExperience() {
           const rankedShow = nextRanked[index];
           const tmdbId = (rankedShow as any)?.tmdbId;
           if (typeof tmdbId !== "number" || !Number.isFinite(tmdbId)) return;
+          // Prevent duplicate events caused by double-invokes/rerenders.
+          if (!shouldEmitRankCompletedEvent(user.id, tmdbId)) return;
 
           await createRankCompletedEvent({
             actorUserId: user.id,
