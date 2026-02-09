@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { getRankedShows, getState, setState } from "@/core/logic/state";
 import { supabase } from "@/lib/supabaseClient";
 import {
@@ -23,6 +24,15 @@ function formatShortDate(ms: number): string {
       day: "numeric",
       year: "numeric",
     });
+  } catch {
+    return "";
+  }
+}
+
+function formatMonthYear(dateLike: string | number): string {
+  try {
+    const d = typeof dateLike === "string" ? new Date(dateLike) : new Date(dateLike);
+    return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
   } catch {
     return "";
   }
@@ -79,13 +89,31 @@ function normalizeWantToWatch(items: unknown): NormalizedWantToWatchItem[] {
 export default function ProfileClient() {
   const [rankedCount, setRankedCount] = useState(0);
   const [wantToWatchCount, setWantToWatchCount] = useState(0);
-  const [avgRating, setAvgRating] = useState<number | null>(null);
 
   const [topShow, setTopShow] = useState<{ title: string; rating: number } | null>(null);
   const [bottomShow, setBottomShow] = useState<{ title: string; rating: number } | null>(null);
   const [newestShow, setNewestShow] = useState<{ title: string; dateLabel: string } | null>(null);
   const [daysSinceFirst, setDaysSinceFirst] = useState<number | null>(null);
   const [topGenres, setTopGenres] = useState<Array<{ genre: string; count: number }>>([]);
+
+  const [username, setUsername] = useState<string | null>(null);
+  const [memberSince, setMemberSince] = useState<string | null>(null);
+  const [friendsCount, setFriendsCount] = useState<number>(0);
+  const [copyMsg, setCopyMsg] = useState<string | null>(null);
+
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  const [myEvents, setMyEvents] = useState<
+    Array<{
+      id: string;
+      tmdbId: number;
+      showTitle: string;
+      derivedRating: number | null;
+      createdAt: string;
+    }>
+  >([]);
+  const [myEventsLoading, setMyEventsLoading] = useState(false);
+  const [myEventsError, setMyEventsError] = useState<string | null>(null);
 
   function recomputeStatsFromLocal() {
     const ranked = getRankedShows(getState());
@@ -95,7 +123,6 @@ export default function ProfileClient() {
     setWantToWatchCount(wtw.length);
 
     if (ranked.length === 0) {
-      setAvgRating(null);
       setTopShow(null);
       setBottomShow(null);
       setNewestShow(null);
@@ -103,10 +130,6 @@ export default function ProfileClient() {
       setTopGenres([]);
       return;
     }
-
-    const sum = ranked.reduce((acc, s) => acc + s.rating, 0);
-    const avg = sum / ranked.length;
-    setAvgRating(Math.round(avg * 10) / 10);
 
     // Top + bottom (based on ranked order)
     setTopShow({ title: ranked[0].title, rating: ranked[0].rating });
@@ -152,6 +175,76 @@ export default function ProfileClient() {
     async function run() {
       const sessionRes = await supabase.auth.getSession();
       const user = sessionRes.data.session?.user ?? null;
+
+      setCurrentUserId(user?.id ?? null);
+
+      if (user) {
+        try {
+          const profRes = await supabase
+            .from("profiles")
+            .select("username, created_at")
+            .eq("user_id", user.id)
+            .maybeSingle();
+
+          const uname = (profRes.data as any)?.username;
+          setUsername(typeof uname === "string" && uname.trim() ? uname.trim() : null);
+
+          const created = (profRes.data as any)?.created_at;
+          setMemberSince(created ? formatMonthYear(created) : null);
+
+          const friendsRes = await supabase
+            .from("friendships")
+            .select("user_low", { count: "exact", head: true })
+            .or(`user_low.eq.${user.id},user_high.eq.${user.id}`);
+
+          setFriendsCount(friendsRes.count ?? 0);
+
+          // Load *my* recent activity (profile feed)
+          setMyEventsLoading(true);
+          setMyEventsError(null);
+          const evRes = await supabase
+            .from("activity_events")
+            .select("id, tmdb_id, show_title, derived_rating, created_at")
+            .eq("actor_user_id", user.id)
+            .order("created_at", { ascending: false })
+            .limit(20);
+
+          if (evRes.error) {
+            setMyEventsError(evRes.error.message);
+            setMyEvents([]);
+          } else {
+            const rows = (evRes.data ?? []).map((r: any) => ({
+              id: String(r.id),
+              tmdbId: typeof r.tmdb_id === "number" ? r.tmdb_id : Number(r.tmdb_id),
+              showTitle: String(r.show_title ?? ""),
+              derivedRating:
+                typeof r.derived_rating === "number"
+                  ? r.derived_rating
+                  : r.derived_rating != null
+                  ? Number(r.derived_rating)
+                  : null,
+              createdAt: String(r.created_at),
+            }));
+            setMyEvents(rows);
+          }
+          setMyEventsLoading(false);
+        } catch {
+          setUsername(null);
+          setMemberSince(null);
+          setFriendsCount(0);
+          setMyEvents([]);
+          setMyEventsError(null);
+          setMyEventsLoading(false);
+        }
+      } else {
+        setUsername(null);
+        setMemberSince(null);
+        setFriendsCount(0);
+        setCurrentUserId(null);
+        setMyEvents([]);
+        setMyEventsError(null);
+        setMyEventsLoading(false);
+      }
 
       if (!user) {
         recomputeStatsFromLocal();
@@ -210,80 +303,209 @@ export default function ProfileClient() {
     };
   }, []);
 
-  const avgText = useMemo(() => {
-    if (avgRating === null) return "—";
-    return avgRating.toFixed(1);
-  }, [avgRating]);
+
+  const handleShareProfile = useCallback(async () => {
+    try {
+      setCopyMsg(null);
+      const u = username ? username.trim() : "";
+      if (!u) {
+        setCopyMsg("Set a username first.");
+        return;
+      }
+      const url = `${window.location.origin}/u/${encodeURIComponent(u)}`;
+      await navigator.clipboard.writeText(url);
+      setCopyMsg("Profile link copied!");
+      window.setTimeout(() => setCopyMsg(null), 1500);
+    } catch {
+      setCopyMsg("Couldn’t copy link.");
+      window.setTimeout(() => setCopyMsg(null), 1500);
+    }
+  }, [username]);
+
+  const handleSignOut = useCallback(async () => {
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      // Keep it simple and reliable
+      window.location.href = "/login";
+    }
+  }, []);
 
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-          <div className="text-white/70 text-sm">Ranked shows</div>
-          <div className="mt-1 text-3xl font-semibold">{rankedCount}</div>
-        </div>
+    <div className="space-y-6">
+      {/* Header card (Beli-ish) */}
+      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-4">
+            {/* Avatar (placeholder for now) */}
+            <div className="h-16 w-16 rounded-full bg-white/10 border border-white/15 flex items-center justify-center">
+              <span className="text-lg font-semibold text-white/70">
+                {(username ?? "?").slice(0, 1).toUpperCase()}
+              </span>
+            </div>
 
-        <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-          <div className="text-white/70 text-sm">Want to watch</div>
-          <div className="mt-1 text-3xl font-semibold">{wantToWatchCount}</div>
-        </div>
-
-        <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-          <div className="text-white/70 text-sm">Average rating</div>
-          <div className="mt-1 text-3xl font-semibold">{avgText}</div>
-          <div className="mt-2 text-xs text-white/50">Derived from your ranked order</div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-          <div className="text-white/70 text-sm">Top show</div>
-          <div className="mt-1 text-lg font-semibold truncate">
-            {topShow ? topShow.title : "—"}
+            <div className="min-w-0">
+              <div className="text-lg font-semibold truncate">
+                @{username ?? "guest"}
+              </div>
+              <div className="mt-1 text-xs text-white/50">
+                {memberSince ? `Member since ${memberSince}` : ""}
+              </div>
+            </div>
           </div>
-          <div className="mt-1 text-sm text-white/60">{topShow ? `Rating ${topShow.rating}` : ""}</div>
+
+          {/* Right-side actions (keep minimal) */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                // Future sprint: open edit modal
+              }}
+              className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm font-medium text-white/80 hover:bg-white/10"
+              title="Profile editing comes later"
+            >
+              Edit profile
+            </button>
+            <button
+              type="button"
+              onClick={handleShareProfile}
+              className="rounded-xl bg-white text-black px-3 py-2 text-sm font-semibold hover:opacity-90"
+            >
+              Share
+            </button>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm font-medium text-white/80 hover:bg-white/10"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
 
-        <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-          <div className="text-white/70 text-sm">Lowest show</div>
-          <div className="mt-1 text-lg font-semibold truncate">
-            {bottomShow ? bottomShow.title : "—"}
+        {copyMsg ? (
+          <div className="mt-3 text-xs text-white/60">{copyMsg}</div>
+        ) : null}
+
+        {/* Stats row */}
+        <div className="mt-5 grid grid-cols-3 gap-3">
+          <Link
+            href="/friends"
+            className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center hover:bg-white/[0.06] transition"
+          >
+            <div className="text-2xl font-semibold">{friendsCount}</div>
+            <div className="mt-1 text-xs text-white/50">Friends</div>
+          </Link>
+          <div className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center">
+            <div className="text-2xl font-semibold">{rankedCount}</div>
+            <div className="mt-1 text-xs text-white/50">Ranked</div>
           </div>
-          <div className="mt-1 text-sm text-white/60">
-            {bottomShow ? `Rating ${bottomShow.rating}` : ""}
+          <div className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center">
+            <div className="text-2xl font-semibold">{wantToWatchCount}</div>
+            <div className="mt-1 text-xs text-white/50">Want to watch</div>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-          <div className="text-white/70 text-sm">Newest ranked</div>
-          <div className="mt-1 text-lg font-semibold truncate">
-            {newestShow ? newestShow.title : "—"}
-          </div>
-          <div className="mt-1 text-sm text-white/60">{newestShow ? newestShow.dateLabel : ""}</div>
+        {/* Quick buttons row (minimal placeholders) */}
+        <div className="mt-4 flex flex-wrap gap-2">
+          {topShow ? (
+            <div className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-xs text-white/70">
+              Top: <span className="font-semibold text-white">{topShow.title}</span>
+            </div>
+          ) : null}
+          {newestShow ? (
+            <div className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-xs text-white/70">
+              Newest: <span className="font-semibold text-white">{newestShow.title}</span>
+            </div>
+          ) : null}
         </div>
+      </section>
 
+      {/* Insights grid (keep your existing stats, just styled cleaner) */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
           <div className="text-white/70 text-sm">Days since first log</div>
           <div className="mt-1 text-3xl font-semibold">{daysSinceFirst === null ? "—" : daysSinceFirst}</div>
         </div>
 
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-          <div className="text-white/70 text-sm">Top genres</div>
-          {topGenres.length === 0 ? (
-            <div className="mt-2 text-sm text-white/50">—</div>
-          ) : (
-            <ol className="mt-2 space-y-1">
-              {topGenres.slice(0, 3).map((g) => (
-                <li key={g.genre} className="flex items-center justify-between gap-3">
-                  <span className="text-sm text-white/80 truncate">{g.genre}</span>
-                  <span className="text-xs text-white/50 shrink-0">{g.count}</span>
-                </li>
-              ))}
-            </ol>
-          )}
-          <div className="mt-2 text-xs text-white/40">Based on ranked shows</div>
+          <div className="text-white/70 text-sm">Top show</div>
+          <div className="mt-1 text-lg font-semibold truncate">{topShow ? topShow.title : "—"}</div>
+          <div className="mt-1 text-sm text-white/60">{topShow ? `Rating ${topShow.rating}` : ""}</div>
         </div>
-      </div>
+
+        <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
+          <div className="text-white/70 text-sm">Lowest show</div>
+          <div className="mt-1 text-lg font-semibold truncate">{bottomShow ? bottomShow.title : "—"}</div>
+          <div className="mt-1 text-sm text-white/60">{bottomShow ? `Rating ${bottomShow.rating}` : ""}</div>
+        </div>
+      </section>
+
+      {/* Top genres */}
+      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white/90">Top genres</h2>
+          <div className="text-xs text-white/40">Based on ranked shows</div>
+        </div>
+
+        {topGenres.length === 0 ? (
+          <div className="mt-3 text-sm text-white/50">—</div>
+        ) : (
+          <ol className="mt-4 space-y-2">
+            {topGenres.slice(0, 5).map((g) => (
+              <li key={g.genre} className="flex items-center justify-between gap-3">
+                <span className="text-sm text-white/80 truncate">{g.genre}</span>
+                <span className="text-xs text-white/50 shrink-0">{g.count}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+      {/* My activity */}
+      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white/90">My activity</h2>
+          <div className="text-xs text-white/40">Latest ranks</div>
+        </div>
+
+        {myEventsLoading ? (
+          <div className="mt-4 text-sm text-white/60">Loading…</div>
+        ) : myEventsError ? (
+          <div className="mt-4 text-sm text-red-300">{myEventsError}</div>
+        ) : myEvents.length === 0 ? (
+          <div className="mt-4 text-sm text-white/50">No activity yet.</div>
+        ) : (
+          <div className="mt-4 space-y-2">
+            {myEvents.map((e) => {
+              const ratingText = e.derivedRating === null ? "—" : e.derivedRating.toFixed(1);
+              const dateLabel = formatShortDate(Date.parse(e.createdAt));
+
+              return (
+                <a
+                  key={e.id}
+                  href={`/show/${e.tmdbId}`}
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/40 px-4 py-3 hover:bg-white/[0.06]"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-white/90 truncate">{e.showTitle}</div>
+                    <div className="mt-1 text-xs text-white/50">{dateLabel}</div>
+                  </div>
+
+                  <div className="shrink-0">
+                    <div className="h-10 w-10 rounded-full border border-white/15 bg-white/5 flex items-center justify-center">
+                      <span className="text-sm font-semibold text-white">{ratingText}</span>
+                    </div>
+                  </div>
+                </a>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
+
+
+
