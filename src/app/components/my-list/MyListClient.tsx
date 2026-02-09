@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getRankedShows, getState, reorderShows } from "@/core/logic/state";
 import RankedDragList from "./RankedDragList";
@@ -43,6 +43,20 @@ export default function MyListClient() {
   type TabKey = "ranked" | "watch" | "recs";
   const [activeTab, setActiveTab] = useState<TabKey>("ranked");
 
+  type RecItem = {
+    tmdbId: number;
+    title: string;
+    year: string | null;
+    posterPath: string | null;
+    why?: string | null;
+  };
+
+  const [recs, setRecs] = useState<RecItem[]>([]);
+  const [recsLoading, setRecsLoading] = useState(false);
+  const [recsError, setRecsError] = useState<string | null>(null);
+
+  const canShowRecs = useMemo(() => ranked.length >= 3, [ranked.length]);
+
   function getTabFromQuery(): TabKey {
     const raw = (searchParams.get("tab") ?? "").toLowerCase();
     if (raw === "watch") return "watch";
@@ -67,6 +81,87 @@ export default function MyListClient() {
     }
   }
 
+  async function loadRecs(): Promise<void> {
+    if (!canShowRecs) {
+      setRecs([]);
+      setRecsLoading(false);
+      setRecsError(null);
+      return;
+    }
+
+    try {
+      setRecsLoading(true);
+      setRecsError(null);
+
+      // Build top genres from ranked shows (server expects ?genres=...)
+      const counts = new Map<string, number>();
+      for (const s of ranked) {
+        const gs = Array.isArray((s as any).genres) ? (s as any).genres : [];
+        for (const g of gs) {
+          if (typeof g !== "string") continue;
+          const key = g.trim();
+          if (!key) continue;
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+      }
+
+      const topGenres = Array.from(counts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([g]) => g)
+        .slice(0, 3);
+
+      if (topGenres.length === 0) {
+        setRecs([]);
+        setRecsLoading(false);
+        setRecsError(null);
+        return;
+      }
+
+      const params = new URLSearchParams();
+      params.set("limit", "20");
+      params.set("genres", topGenres.join(","));
+
+      const res = await fetch(`/api/tmdb/recommended-tv?${params.toString()}`, {
+        cache: "no-store" as any,
+      });
+
+      if (!res.ok) {
+        // Try to surface the real error (helps debugging)
+        let detail = "";
+        try {
+          const j = await res.json();
+          detail = typeof j?.error === "string" ? j.error : "";
+        } catch {
+          try {
+            detail = await res.text();
+          } catch {}
+        }
+        const msg = detail ? `Failed to load recommendations: ${detail}` : "Failed to load recommendations";
+        throw new Error(msg);
+      }
+
+      const json = await res.json();
+      const raw = Array.isArray(json?.results) ? json.results : [];
+
+      const next: RecItem[] = raw
+        .map((x: any) => ({
+          tmdbId: Number(x.tmdbId ?? x.tmdb_id ?? x.id),
+          title: String(x.title ?? x.name ?? ""),
+          year: x.year ?? (typeof x.first_air_date === "string" ? x.first_air_date.slice(0, 4) : null),
+          posterPath: x.posterPath ?? x.poster_path ?? null,
+          why: typeof x.why === "string" ? x.why : null,
+        }))
+        .filter((x: RecItem) => Number.isFinite(x.tmdbId) && !!x.title);
+
+      setRecs(next);
+    } catch (e) {
+      setRecs([]);
+      setRecsError(e instanceof Error ? e.message : "Failed to load recommendations");
+    } finally {
+      setRecsLoading(false);
+    }
+  }
+
   useEffect(() => {
     setRanked(getRankedShows(getState()));
     setWantToWatch(safeGetWantToWatch());
@@ -78,6 +173,12 @@ export default function MyListClient() {
     if (next !== "ranked") setIsReorderMode(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  useEffect(() => {
+    if (activeTab !== "recs") return;
+    void loadRecs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, canShowRecs]);
 
   return (
     <div className="space-y-6">
@@ -309,13 +410,90 @@ export default function MyListClient() {
 
       {activeTab === "recs" ? (
         <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-          <h2 className="text-lg font-semibold">Recs</h2>
-          <p className="mt-2 text-white/60">
-            Recommendations are coming soon.
-          </p>
-          <p className="mt-1 text-sm text-white/40">
-            (We’ll turn this on once TMDB is integrated.)
-          </p>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Recs</h2>
+
+            {canShowRecs ? (
+              <button
+                type="button"
+                onClick={() => void loadRecs()}
+                disabled={recsLoading}
+                className="rounded-xl bg-white/10 border border-white/15 font-medium px-3 py-2 text-sm disabled:opacity-60"
+              >
+                {recsLoading ? "Loading…" : "Refresh"}
+              </button>
+            ) : null}
+          </div>
+
+          {!canShowRecs ? (
+            <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-4">
+              <div className="text-sm font-medium">Unlock recommendations</div>
+              <div className="mt-1 text-sm text-white/60">
+                Rank a few more shows to unlock personalized recs.
+              </div>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => router.push("/rank")}
+                  className="rounded-xl bg-white text-black font-medium px-3 py-2 text-sm"
+                >
+                  Rank a show
+                </button>
+              </div>
+            </div>
+          ) : recsError ? (
+            <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              {recsError}
+            </div>
+          ) : recsLoading && recs.length === 0 ? (
+            <div className="mt-3 text-sm text-white/60">Loading recommendations…</div>
+          ) : recs.length === 0 ? (
+            <div className="mt-3 text-sm text-white/60">
+              No recommendations yet. Try ranking another show.
+            </div>
+          ) : (
+            <div className="mt-4 overflow-x-auto">
+              <div className="flex gap-3 pr-2">
+                {recs.map((r) => {
+                  const img = posterUrl(r.posterPath, "w154");
+                  return (
+                    <button
+                      key={r.tmdbId}
+                      type="button"
+                      onClick={() => router.push(`/show/${r.tmdbId}`)}
+                      className="w-[170px] shrink-0 text-left rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20"
+                    >
+                      <div className="p-3 space-y-2">
+                        {img ? (
+                          <img
+                            src={img}
+                            alt=""
+                            className="w-full aspect-[2/3] rounded-xl object-cover bg-white/10"
+                          />
+                        ) : (
+                          <div className="w-full aspect-[2/3] rounded-xl bg-white/10" />
+                        )}
+
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm truncate">
+                            {r.title}
+                          </div>
+                          <div className="text-xs text-white/50 truncate">
+                            {r.year ? r.year : ""}
+                          </div>
+                          {r.why ? (
+                            <div className="mt-1 text-[11px] text-white/60 line-clamp-2">
+                              {r.why}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </section>
       ) : null}
     </div>

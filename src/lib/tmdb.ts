@@ -33,7 +33,6 @@ export async function tmdbFetch<T>(
   }
 
   const res = await fetch(url.toString(), {
-    // These can change; for now keep it simple and avoid caching issues in dev.
     cache: "no-store",
   });
 
