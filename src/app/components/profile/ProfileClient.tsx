@@ -459,15 +459,43 @@ export default function ProfileClient() {
 
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
           <div className="text-white/70 text-sm">Top show</div>
-          <div className="mt-1 text-lg font-semibold truncate">{topShow ? topShow.title : "—"}</div>
-          <div className="mt-1 text-sm text-white/60">
+
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-lg font-semibold truncate">{topShow ? topShow.title : "—"}</div>
+              <div className="mt-1 text-xs text-white/50">Highest-rated right now</div>
+            </div>
+
+            {topShow ? (
+              <div className="shrink-0">
+                <div className="h-10 w-10 rounded-full border border-white/15 bg-white/5 flex items-center justify-center">
+                  <span className={`text-sm font-semibold ${ratingTextClass(topShow.rating)}`}>
+                    {Number.isFinite(topShow.rating) ? topShow.rating.toFixed(1) : "—"}
+                  </span>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
           <div className="text-white/70 text-sm">Lowest show</div>
-          <div className="mt-1 text-lg font-semibold truncate">{bottomShow ? bottomShow.title : "—"}</div>
-          <div className="mt-1 text-sm text-white/60">
+
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-lg font-semibold truncate">{bottomShow ? bottomShow.title : "—"}</div>
+              <div className="mt-1 text-xs text-white/50">Lowest-rated right now</div>
+            </div>
+
+            {bottomShow ? (
+              <div className="shrink-0">
+                <div className="h-10 w-10 rounded-full border border-white/15 bg-white/5 flex items-center justify-center">
+                  <span className={`text-sm font-semibold ${ratingTextClass(bottomShow.rating)}`}>
+                    {Number.isFinite(bottomShow.rating) ? bottomShow.rating.toFixed(1) : "—"}
+                  </span>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </section>
