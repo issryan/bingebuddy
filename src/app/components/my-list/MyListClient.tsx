@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getRankedShows, getState, reorderShows } from "@/core/logic/state";
 import RankedDragList from "./RankedDragList";
-import { safeGetWantToWatch, type WantToWatchItem } from "@/core/storage/wantToWatchStorage";
-import { saveToBackend } from "@/core/storage/backendSync";
+import type { WantToWatchItem } from "@/core/storage/wantToWatchStorage";
+import { loadFromBackend, saveToBackend } from "@/core/storage/backendSync";
 import { supabase } from "@/lib/supabaseClient";
 
 const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
@@ -21,6 +21,7 @@ function genresLabel(genres: string[] | undefined): string {
 }
 
 function ratingBadgeClass(rating: number): string {
+  if (!Number.isFinite(rating)) return "border-white/15 text-white/60";
   if (rating >= 7) return "border-green-400/40 text-green-300";
   if (rating >= 4) return "border-yellow-400/40 text-yellow-300";
   return "border-red-400/40 text-red-300";
@@ -64,6 +65,37 @@ export default function MyListClient() {
     return "ranked";
   }
 
+  function replaceWithoutRefreshParam() {
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("refresh");
+    const qs = next.toString();
+    router.replace(qs ? `/my-list?${qs}` : "/my-list");
+  }
+
+  async function hydrateFromBackend(): Promise<void> {
+    try {
+      const sessionRes = await supabase.auth.getSession();
+      const user = sessionRes.data.session?.user ?? null;
+      if (!user) return;
+
+      const res = await loadFromBackend(user.id);
+      if (!res.ok) return;
+
+      // ranked
+      // Supabase only stores order (rank_position). Ratings are derived client-side.
+      // So: write the loaded list into the in-memory ranking state, then re-derive.
+      const loadedRanked = (res.data.state.shows ?? []) as any[];
+      const state = getState() as any;
+      state.shows = loadedRanked;
+      setRanked(getRankedShows(state));
+
+      // want to watch
+      setWantToWatch(res.data.wantToWatch ?? []);
+    } catch {
+      // ignore
+    }
+  }
+
   async function saveSnapshotToCloud(): Promise<void> {
     try {
       const sessionRes = await supabase.auth.getSession();
@@ -71,11 +103,14 @@ export default function MyListClient() {
       if (!user) return;
 
       const state = getState();
-      const wtw = safeGetWantToWatch().map((item) => ({
+      const wtw = (wantToWatch ?? []).map((item) => ({
         ...item,
         overview: item.overview ?? "",
       }));
       await saveToBackend(user.id, state, wtw as any);
+
+      // Immediately re-hydrate so this page reflects what Supabase accepted.
+      await hydrateFromBackend();
     } catch {
       // silent — local-first UX
     }
@@ -163,8 +198,8 @@ export default function MyListClient() {
   }
 
   useEffect(() => {
-    setRanked(getRankedShows(getState()));
-    setWantToWatch(safeGetWantToWatch());
+    // On first load, always hydrate from Supabase so this page reflects the source of truth.
+    void hydrateFromBackend();
   }, []);
 
   useEffect(() => {
@@ -173,6 +208,45 @@ export default function MyListClient() {
     if (next !== "ranked") setIsReorderMode(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  useEffect(() => {
+    // If another page wants this screen to re-hydrate immediately after navigation,
+    // it can navigate to /my-list?...&refresh=1. This avoids needing a manual reload.
+    if (searchParams.get("refresh") === "1") {
+      void (async () => {
+        await hydrateFromBackend();
+        replaceWithoutRefreshParam();
+      })();
+      return;
+    }
+
+    // Fallback: some flows may set a one-shot flag before navigating.
+    if (typeof window !== "undefined") {
+      const flag = window.sessionStorage.getItem("bingebuddy:refresh-mylist");
+      if (flag) {
+        window.sessionStorage.removeItem("bingebuddy:refresh-mylist");
+        void hydrateFromBackend();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  useEffect(() => {
+    function onChanged() {
+      void hydrateFromBackend();
+    }
+
+    // When ranking/want-to-watch changes elsewhere, refresh this page.
+    window.addEventListener("bingebuddy:state-changed", onChanged);
+
+    // Also refresh when the tab regains focus (nice quality-of-life)
+    window.addEventListener("focus", onChanged);
+
+    return () => {
+      window.removeEventListener("bingebuddy:state-changed", onChanged);
+      window.removeEventListener("focus", onChanged);
+    };
+  }, []);
 
   useEffect(() => {
     if (activeTab !== "recs") return;
@@ -309,7 +383,7 @@ export default function MyListClient() {
                           aria-label={`Rating ${s.rating}`}
                           title={`Rating ${s.rating}`}
                         >
-                          {Number(s.rating).toFixed(1)}
+                          {Number.isFinite(s.rating) ? Number(s.rating).toFixed(1) : "—"}
                         </div>
                       </button>
                     </li>

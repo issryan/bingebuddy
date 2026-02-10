@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getRankedShows, getState } from "@/core/logic/state";
+import { supabase } from "@/lib/supabaseClient";
+import { addToWantToWatch, isTmdbAlreadyInWantToWatch } from "@/core/storage/wantToWatchStorage";
 
 const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
 
@@ -44,6 +46,10 @@ export default function ShowDetailsPage() {
   const [details, setDetails] = useState<DetailsPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [checkingLists, setCheckingLists] = useState(false);
+  const [isInWantToWatch, setIsInWantToWatch] = useState(false);
+  const [isRankedInDb, setIsRankedInDb] = useState(false);
+  const [listMessage, setListMessage] = useState<string | null>(null);
 
   const rankedMatch = useMemo(() => {
     if (!Number.isFinite(tmdbId)) return null;
@@ -52,6 +58,58 @@ export default function ShowDetailsPage() {
     if (idx === -1) return null;
     return { show: ranked[idx], rank: idx + 1 };
   }, [tmdbId]);
+
+  async function requireUserId(): Promise<string | null> {
+    const { data } = await supabase.auth.getSession();
+    const userId = data.session?.user?.id ?? null;
+    if (!userId) {
+      router.push("/login");
+      return null;
+    }
+    return userId;
+  }
+
+  async function refreshListStatus(nextTmdbId: number) {
+    try {
+      setCheckingLists(true);
+      setListMessage(null);
+
+      // Local fallback (My List reads from localStorage)
+      const localHasWtw = isTmdbAlreadyInWantToWatch(nextTmdbId);
+
+      const { data } = await supabase.auth.getSession();
+      const userId = data.session?.user?.id ?? null;
+      if (!userId) {
+        // Not signed in -> show local status only.
+        setIsInWantToWatch(localHasWtw);
+        setIsRankedInDb(false);
+        return;
+      }
+
+      const [rankedRes, wtwRes] = await Promise.all([
+        supabase
+          .from("ranked_shows")
+          .select("tmdb_id", { head: true, count: "exact" })
+          .eq("user_id", userId)
+          .eq("tmdb_id", nextTmdbId),
+        supabase
+          .from("want_to_watch")
+          .select("tmdb_id", { head: true, count: "exact" })
+          .eq("user_id", userId)
+          .eq("tmdb_id", nextTmdbId),
+      ]);
+
+      // If these fail due to RLS or auth, just treat as not present.
+      const rankedCount = rankedRes.error ? 0 : (rankedRes.count ?? 0);
+      const wtwCount = wtwRes.error ? 0 : (wtwRes.count ?? 0);
+
+      setIsRankedInDb(rankedCount > 0);
+      // Consider localStorage OR DB
+      setIsInWantToWatch(localHasWtw || wtwCount > 0);
+    } finally {
+      setCheckingLists(false);
+    }
+  }
 
   useEffect(() => {
     if (!Number.isFinite(tmdbId)) {
@@ -73,6 +131,8 @@ export default function ShowDetailsPage() {
 
         if (cancelled) return;
         setDetails(json);
+        // Also check if this show is already ranked / in want-to-watch (Supabase)
+        void refreshListStatus(json.tmdbId);
       } catch {
         if (cancelled) return;
         setError("Couldn’t load details right now.");
@@ -89,6 +149,101 @@ export default function ShowDetailsPage() {
     };
   }, [tmdbId]);
 
+  async function onClickRank() {
+    setListMessage(null);
+    const userId = await requireUserId();
+    if (!userId) return;
+
+    // Deep-link into the existing rank flow. (We are NOT changing ranking logic.)
+    router.push(`/log?tmdbId=${tmdbId}&auto=1`);
+  }
+
+  async function onClickWantToWatch() {
+    setListMessage(null);
+
+    const userId = await requireUserId();
+    if (!userId) return;
+
+    // Add to localStorage (this is what My List uses)
+    const rankedNow = getRankedShows(getState());
+    const localRes = addToWantToWatch(rankedNow as any, {
+      title: details?.title ?? "",
+      tmdbId: details?.tmdbId ?? null,
+      posterPath: details?.posterPath ?? null,
+      year: details?.year ?? null,
+      genres: details?.genres ?? [],
+      overview: details?.overview ?? "",
+      createdAt: Date.now(),
+    });
+
+    if (!localRes.ok) {
+      setListMessage(localRes.error);
+      return;
+    }
+
+    setIsInWantToWatch(true);
+
+    if (!details || !Number.isFinite(details.tmdbId)) {
+      setListMessage("Missing show details. Try again.");
+      return;
+    }
+
+    // If ranked (local or backend), don’t allow adding to want-to-watch.
+    if (rankedMatch || isRankedInDb) {
+      setListMessage("This show is already ranked.");
+      return;
+    }
+
+    try {
+      setCheckingLists(true);
+
+      // Best-effort: also persist to Supabase so it syncs across devices.
+      // Upsert show metadata so other screens can render it reliably.
+      const showRow = {
+        user_id: userId,
+        tmdb_id: details.tmdbId,
+        title: details.title,
+        poster_path: details.posterPath ?? null,
+        year: details.year ?? null,
+        genres: details.genres ?? [],
+        overview: details.overview ?? "",
+      };
+
+      const upsertShow = await supabase
+        .from("shows")
+        .upsert([showRow], { onConflict: "user_id,tmdb_id" });
+
+      if (upsertShow.error) {
+        setListMessage(upsertShow.error.message);
+        return;
+      }
+
+      // Add to want_to_watch (best-effort idempotent)
+      const upsertWtw = await supabase
+        .from("want_to_watch")
+        .upsert([{ user_id: userId, tmdb_id: details.tmdbId }], {
+          // If you have a unique constraint on (user_id, tmdb_id), this works.
+          // If you don’t, Supabase will return an error; we fallback to insert.
+          onConflict: "user_id,tmdb_id",
+        });
+
+      if (upsertWtw.error) {
+        const ins = await supabase
+          .from("want_to_watch")
+          .insert([{ user_id: userId, tmdb_id: details.tmdbId }]);
+        if (ins.error) {
+          setListMessage(ins.error.message);
+          return;
+        }
+      }
+
+      setIsInWantToWatch(true);
+      setListMessage("Added to Want to Watch.");
+    } finally {
+      setCheckingLists(false);
+    }
+  }
+
   const poster = imgUrl(details?.posterPath, "w342");
   const heroImg = imgUrl(details?.posterPath, "w500");
 
@@ -104,16 +259,53 @@ export default function ShowDetailsPage() {
           ← Back
         </button>
 
-        {rankedMatch ? (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-white/60">Ranked</span>
+        <div className="flex items-center gap-2">
+          {rankedMatch ? (
+            <>
+              <span className="text-sm text-white/60">Ranked</span>
+              <span className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm font-semibold text-white">
+                #{rankedMatch.rank}
+              </span>
+            </>
+          ) : isInWantToWatch ? (
             <span className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm font-semibold text-white">
-              #{rankedMatch.rank}
+              In Want to Watch
             </span>
-          </div>
-        ) : (
-          <span className="text-sm text-white/50">Not ranked yet</span>
-        )}
+          ) : (
+            <span className="text-sm text-white/50">Not ranked yet</span>
+          )}
+
+          {!rankedMatch ? (
+            <button
+              type="button"
+              onClick={onClickRank}
+              className="rounded-xl bg-white text-black px-3 py-2 text-sm font-semibold"
+            >
+              Rank
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={onClickWantToWatch}
+            disabled={checkingLists || isInWantToWatch || !!rankedMatch || isRankedInDb}
+            className={
+              "rounded-xl border px-3 py-2 text-sm font-semibold " +
+              (isInWantToWatch || rankedMatch || isRankedInDb
+                ? "bg-white/5 border-white/10 text-white/50"
+                : "bg-white/10 border-white/15 text-white hover:bg-white/15")
+            }
+            title={
+              rankedMatch || isRankedInDb
+                ? "Already ranked"
+                : isInWantToWatch
+                ? "Already in Want to Watch"
+                : "Add to Want to Watch"
+            }
+          >
+            {isInWantToWatch ? "Added" : "Want to Watch"}
+          </button>
+        </div>
       </div>
 
       {/* Hero */}
@@ -223,8 +415,14 @@ export default function ShowDetailsPage() {
                 </div>
 
                 {!rankedMatch ? (
-                  <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/75">
-                    Not ranked yet. Go to Log to rank this show.
+                  <div className="space-y-2">
+                    <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/75">
+                      Rank it now, or save it for later.
+                    </div>
+
+                    {listMessage ? (
+                      <div className="text-xs text-white/60">{listMessage}</div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

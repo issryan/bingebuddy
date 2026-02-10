@@ -61,7 +61,7 @@ export async function loadFromBackend(userId: string): Promise<BackendResult<Clo
     // 1) Ranked order
     const rankedRes = await supabase
       .from("ranked_shows")
-      .select("tmdb_id, rank_position")
+      .select("tmdb_id, rank_position, derived_rating")
       .eq("user_id", userId)
       .order("rank_position", { ascending: true });
 
@@ -70,6 +70,17 @@ export async function loadFromBackend(userId: string): Promise<BackendResult<Clo
     }
 
     const rankedRows = rankedRes.data ?? [];
+    const rankedRatingByTmdbId = new Map<number, number>();
+    for (const r of rankedRows as any[]) {
+      const id = typeof r.tmdb_id === "number" ? r.tmdb_id : Number(r.tmdb_id);
+      const ratingRaw = r.derived_rating;
+      const rating =
+        typeof ratingRaw === "number" ? ratingRaw : ratingRaw != null ? Number(ratingRaw) : NaN;
+
+      if (Number.isFinite(id) && Number.isFinite(rating)) {
+        rankedRatingByTmdbId.set(id, rating);
+      }
+    }
     const rankedTmdbIds = rankedRows
       .map((r: any) => (typeof r.tmdb_id === "number" ? r.tmdb_id : Number(r.tmdb_id)))
       .filter((n: number) => Number.isFinite(n));
@@ -113,7 +124,14 @@ export async function loadFromBackend(userId: string): Promise<BackendResult<Clo
 
       for (const row of showsRes.data ?? []) {
         const show = mapShowRowToShow(row);
+
         if (typeof show.tmdbId === "number" && Number.isFinite(show.tmdbId)) {
+          // Attach the latest derived rating for ranked items (prevents NaN in UI)
+          const r = rankedRatingByTmdbId.get(show.tmdbId);
+          if (typeof r === "number" && Number.isFinite(r)) {
+            (show as any).rating = r;
+          }
+
           showMap.set(show.tmdbId, show);
         }
       }
@@ -121,7 +139,18 @@ export async function loadFromBackend(userId: string): Promise<BackendResult<Clo
 
     // 4) Build ranked shows list in correct order
     const rankedShows: Show[] = rankedTmdbIds
-      .map((id) => showMap.get(id))
+      .map((id) => {
+        const s = showMap.get(id);
+        if (!s) return null;
+
+        // Safety: if rating wasn't attached above for any reason, attach here too.
+        const r = rankedRatingByTmdbId.get(id);
+        if (typeof r === "number" && Number.isFinite(r)) {
+          (s as any).rating = r;
+        }
+
+        return s;
+      })
       .filter((s): s is Show => !!s);
 
     // 5) Build want-to-watch list with metadata
@@ -156,7 +185,7 @@ export async function loadFromBackend(userId: string): Promise<BackendResult<Clo
 
 /**
  * Save local ranked + want-to-watch into Supabase.
- * Ratings are NOT stored — order is the truth.
+ * We store `derived_rating` for display, but order is still the source of truth.
  */
 export async function saveToBackend(
   userId: string,
@@ -217,6 +246,7 @@ export async function saveToBackend(
         user_id: userId,
         tmdb_id: s.tmdbId,
         rank_position: idx,
+        derived_rating: typeof s.rating === "number" && Number.isFinite(s.rating) ? s.rating : null,
       }));
 
       const insRanked = await supabase.from("ranked_shows").insert(rankedRows);
@@ -555,14 +585,14 @@ export async function loadFriendsFeed(
         typeof r.rank_position === "number"
           ? r.rank_position
           : r.rank_position != null
-          ? Number(r.rank_position)
-          : null,
+            ? Number(r.rank_position)
+            : null,
       derivedRating:
         typeof r.derived_rating === "number"
           ? r.derived_rating
           : r.derived_rating != null
-          ? Number(r.derived_rating)
-          : null,
+            ? Number(r.derived_rating)
+            : null,
       createdAt: String(r.created_at),
     }));
 
