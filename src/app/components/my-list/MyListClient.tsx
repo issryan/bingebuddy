@@ -7,6 +7,9 @@ import RankedDragList from "./RankedDragList";
 import type { WantToWatchItem } from "@/core/storage/wantToWatchStorage";
 import { loadFromBackend, saveToBackend } from "@/core/storage/backendSync";
 import { supabase } from "@/lib/supabaseClient";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
 
@@ -27,11 +30,6 @@ function ratingBadgeClass(rating: number): string {
   return "border-red-400/40 text-red-300";
 }
 
-function tabClass(active: boolean): string {
-  return active
-    ? "rounded-xl bg-white/10 border border-white/20 px-3 py-2 text-sm font-medium text-white"
-    : "rounded-xl bg-transparent border border-white/10 px-3 py-2 text-sm font-medium text-white/70 hover:bg-white/5 hover:text-white";
-}
 
 export default function MyListClient() {
   const router = useRouter();
@@ -40,6 +38,9 @@ export default function MyListClient() {
   const [ranked, setRanked] = useState(() => getRankedShows(getState()));
   const [wantToWatch, setWantToWatch] = useState<WantToWatchItem[]>([]);
   const [isReorderMode, setIsReorderMode] = useState(false);
+  const PAGE_SIZE = 20;
+  const [rankedVisible, setRankedVisible] = useState(PAGE_SIZE);
+  const [wtwVisible, setWtwVisible] = useState(PAGE_SIZE);
 
   type TabKey = "ranked" | "watch" | "recs";
   const [activeTab, setActiveTab] = useState<TabKey>("ranked");
@@ -57,6 +58,8 @@ export default function MyListClient() {
   const [recsError, setRecsError] = useState<string | null>(null);
 
   const canShowRecs = useMemo(() => ranked.length >= 3, [ranked.length]);
+  const rankedSlice = useMemo(() => ranked.slice(0, rankedVisible), [ranked, rankedVisible]);
+  const wtwSlice = useMemo(() => wantToWatch.slice(0, wtwVisible), [wantToWatch, wtwVisible]);
 
   function getTabFromQuery(): TabKey {
     const raw = (searchParams.get("tab") ?? "").toLowerCase();
@@ -88,9 +91,11 @@ export default function MyListClient() {
       const state = getState() as any;
       state.shows = loadedRanked;
       setRanked(getRankedShows(state));
+      setRankedVisible(PAGE_SIZE);
 
       // want to watch
       setWantToWatch(res.data.wantToWatch ?? []);
+      setWtwVisible(PAGE_SIZE);
     } catch {
       // ignore
     }
@@ -256,66 +261,37 @@ export default function MyListClient() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className={tabClass(activeTab === "ranked")}
-          onClick={() => {
-            setIsReorderMode(false);
-            setActiveTab("ranked");
-            router.replace("/my-list");
-          }}
-        >
-          Ranked
-        </button>
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => {
+          const next = (v as TabKey) ?? "ranked";
+          setIsReorderMode(false);
+          setActiveTab(next);
 
-        <button
-          type="button"
-          className={tabClass(activeTab === "watch")}
-          onClick={() => {
-            setIsReorderMode(false);
-            setActiveTab("watch");
-            router.replace("/my-list?tab=watch");
-          }}
-        >
-          Want to Watch
-        </button>
+          if (next === "ranked") router.replace("/my-list");
+          if (next === "watch") router.replace("/my-list?tab=watch");
+          if (next === "recs") router.replace("/my-list?tab=recs");
+        }}
+        className="w-full"
+      >
+        <TabsList className="w-full justify-start">
+          <TabsTrigger value="ranked">Ranked</TabsTrigger>
+          <TabsTrigger value="watch">Want to Watch</TabsTrigger>
+          <TabsTrigger value="recs">Recs</TabsTrigger>
+        </TabsList>
 
-        <button
-          type="button"
-          className={tabClass(activeTab === "recs")}
-          onClick={() => {
-            setIsReorderMode(false);
-            setActiveTab("recs");
-            router.replace("/my-list?tab=recs");
-          }}
-        >
-          Recs
-        </button>
-      </div>
-
-      {activeTab === "ranked" ? (
-        <>
+        <TabsContent value="ranked" className="mt-4">
           {/* Ranked / Watched */}
-          <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">Ranked</h2>
-
+          <Card id="tab-ranked" className="border-white/15 bg-white/[0.03]">
+            <CardHeader className="flex flex-row items-center justify-between gap-3">
+              <CardTitle className="text-lg">Ranked</CardTitle>
               {ranked.length > 1 ? (
-                <button
-                  type="button"
-                  onClick={() => setIsReorderMode((v) => !v)}
-                  className={
-                    isReorderMode
-                      ? "rounded-xl bg-white text-black font-medium px-3 py-2 text-sm"
-                      : "rounded-xl bg-white/10 border border-white/15 font-medium px-3 py-2 text-sm"
-                  }
-                >
+                <Button type="button" variant={isReorderMode ? "default" : "secondary"} onClick={() => setIsReorderMode((v) => !v)}>
                   {isReorderMode ? "Done" : "Reorder"}
-                </button>
+                </Button>
               ) : null}
-            </div>
-
+            </CardHeader>
+            <CardContent>
             {ranked.length === 0 ? (
               <p className="mt-3 text-white/60">No ranked shows yet.</p>
             ) : isReorderMode ? (
@@ -331,11 +307,13 @@ export default function MyListClient() {
                 />
               </>
             ) : (
+              <>
               <ol className="mt-4 space-y-2">
-                {ranked.map((s, i) => {
+                {rankedSlice.map((s) => {
                   const img = posterUrl(s.posterPath, "w92");
                   const metaLine = [s.year ? s.year : "", genresLabel(s.genres)].filter(Boolean).join(" • ");
                   const canOpen = typeof s.tmdbId === "number" && s.tmdbId > 0;
+                  const trueRank = ranked.findIndex((x) => x.id === s.id) + 1;
 
                   return (
                     <li key={s.id}>
@@ -365,7 +343,7 @@ export default function MyListClient() {
 
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-white/60 shrink-0">#{i + 1}</span>
+                              <span className="text-white/60 shrink-0">#{trueRank}</span>
                               <span className="font-medium truncate">{s.title}</span>
                             </div>
 
@@ -380,8 +358,8 @@ export default function MyListClient() {
                             "shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-full border bg-white/5 text-sm font-semibold " +
                             ratingBadgeClass(s.rating)
                           }
-                          aria-label={`Rating ${s.rating}`}
-                          title={`Rating ${s.rating}`}
+                          aria-label={Number.isFinite(s.rating) ? `Rating ${Number(s.rating).toFixed(1)}` : "Rating unavailable"}
+                          title={Number.isFinite(s.rating) ? `Rating ${Number(s.rating).toFixed(1)}` : "Rating unavailable"}
                         >
                           {Number.isFinite(s.rating) ? Number(s.rating).toFixed(1) : "—"}
                         </div>
@@ -390,22 +368,32 @@ export default function MyListClient() {
                   );
                 })}
               </ol>
+              {ranked.length > rankedVisible ? (
+                <div className="mt-4 flex justify-center">
+                  <Button type="button" variant="secondary" onClick={() => setRankedVisible((v) => v + PAGE_SIZE)}>
+                    Load more
+                  </Button>
+                </div>
+              ) : null}
+              </>
             )}
-          </section>
-        </>
-      ) : null}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-      {activeTab === "watch" ? (
-        <>
+        <TabsContent value="watch" className="mt-4">
           {/* Want to Watch / Bookmarked */}
-          <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-            <h2 className="text-lg font-semibold">Want to Watch</h2>
-
+          <Card id="tab-watch" className="border-white/15 bg-white/[0.03]">
+            <CardHeader>
+              <CardTitle className="text-lg">Want to Watch</CardTitle>
+            </CardHeader>
+            <CardContent>
             {wantToWatch.length === 0 ? (
               <p className="mt-3 text-white/60">No bookmarked shows yet.</p>
             ) : (
+              <>
               <ul className="mt-4 space-y-2">
-                {wantToWatch.map((item) => (
+                {wtwSlice.map((item) => (
                   <li
                     key={item.id}
                     className="flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-3"
@@ -452,7 +440,7 @@ export default function MyListClient() {
                             </div>
                           </button>
 
-                          <button
+                          <Button
                             type="button"
                             onClick={async () => {
                               const params = new URLSearchParams();
@@ -467,109 +455,107 @@ export default function MyListClient() {
                               await saveSnapshotToCloud();
                               router.push(`/rank?${params.toString()}`);
                             }}
-                            className="shrink-0 rounded-xl bg-white text-black font-medium px-3 py-2 text-sm"
                           >
                             Rank
-                          </button>
+                          </Button>
                         </>
                       );
                     })()}
                   </li>
                 ))}
               </ul>
+              {wantToWatch.length > wtwVisible ? (
+                <div className="mt-4 flex justify-center">
+                  <Button type="button" variant="secondary" onClick={() => setWtwVisible((v) => v + PAGE_SIZE)}>
+                    Load more
+                  </Button>
+                </div>
+              ) : null}
+              </>
             )}
-          </section>
-        </>
-      ) : null}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-      {activeTab === "recs" ? (
-        <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold">Recs</h2>
-
-            {canShowRecs ? (
-              <button
-                type="button"
-                onClick={() => void loadRecs()}
-                disabled={recsLoading}
-                className="rounded-xl bg-white/10 border border-white/15 font-medium px-3 py-2 text-sm disabled:opacity-60"
-              >
-                {recsLoading ? "Loading…" : "Refresh"}
-              </button>
-            ) : null}
-          </div>
-
-          {!canShowRecs ? (
-            <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-4">
-              <div className="text-sm font-medium">Unlock recommendations</div>
-              <div className="mt-1 text-sm text-white/60">
-                Rank a few more shows to unlock personalized recs.
+        <TabsContent value="recs" className="mt-4">
+          <Card id="tab-recs" className="border-white/15 bg-white/[0.03]">
+            <CardHeader className="flex flex-row items-center justify-between gap-3">
+              <CardTitle className="text-lg">Recs</CardTitle>
+              {canShowRecs ? (
+                <Button type="button" variant="secondary" onClick={() => void loadRecs()} disabled={recsLoading}>
+                  {recsLoading ? "Loading…" : "Refresh"}
+                </Button>
+              ) : null}
+            </CardHeader>
+            <CardContent>
+            {!canShowRecs ? (
+              <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="text-sm font-medium">Unlock recommendations</div>
+                <div className="mt-1 text-sm text-white/60">
+                  Rank a few more shows to unlock personalized recs.
+                </div>
+                <div className="mt-3">
+                  <Button type="button" onClick={() => router.push("/rank")}>Rank a show</Button>
+                </div>
               </div>
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={() => router.push("/rank")}
-                  className="rounded-xl bg-white text-black font-medium px-3 py-2 text-sm"
-                >
-                  Rank a show
-                </button>
+            ) : recsError ? (
+              <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                {recsError}
               </div>
-            </div>
-          ) : recsError ? (
-            <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-              {recsError}
-            </div>
-          ) : recsLoading && recs.length === 0 ? (
-            <div className="mt-3 text-sm text-white/60">Loading recommendations…</div>
-          ) : recs.length === 0 ? (
-            <div className="mt-3 text-sm text-white/60">
-              No recommendations yet. Try ranking another show.
-            </div>
-          ) : (
-            <div className="mt-4 overflow-x-auto">
-              <div className="flex gap-3 pr-2">
-                {recs.map((r) => {
-                  const img = posterUrl(r.posterPath, "w154");
-                  return (
-                    <button
-                      key={r.tmdbId}
-                      type="button"
-                      onClick={() => router.push(`/show/${r.tmdbId}`)}
-                      className="w-[170px] shrink-0 text-left rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20"
-                    >
-                      <div className="p-3 space-y-2">
-                        {img ? (
-                          <img
-                            src={img}
-                            alt=""
-                            className="w-full aspect-[2/3] rounded-xl object-cover bg-white/10"
-                          />
-                        ) : (
-                          <div className="w-full aspect-[2/3] rounded-xl bg-white/10" />
-                        )}
+            ) : recsLoading && recs.length === 0 ? (
+              <div className="mt-3 text-sm text-white/60">Loading recommendations…</div>
+            ) : recs.length === 0 ? (
+              <div className="mt-3 text-sm text-white/60">
+                No recommendations yet. Try ranking another show.
+              </div>
+            ) : (
+              <div className="mt-4 overflow-x-auto">
+                <div className="flex gap-3 pr-2">
+                  {recs.map((r) => {
+                    const img = posterUrl(r.posterPath, "w154");
+                    return (
+                      <button
+                        key={r.tmdbId}
+                        type="button"
+                        onClick={() => router.push(`/show/${r.tmdbId}`)}
+                        className="w-[170px] shrink-0 text-left rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20"
+                      >
+                        <div className="p-3 space-y-2">
+                          {img ? (
+                            <img
+                              src={img}
+                              alt=""
+                              className="w-full aspect-[2/3] rounded-xl object-cover bg-white/10"
+                            />
+                          ) : (
+                            <div className="w-full aspect-[2/3] rounded-xl bg-white/10" />
+                          )}
 
-                        <div className="min-w-0">
-                          <div className="font-medium text-sm truncate">
-                            {r.title}
-                          </div>
-                          <div className="text-xs text-white/50 truncate">
-                            {r.year ? r.year : ""}
-                          </div>
-                          {r.why ? (
-                            <div className="mt-1 text-[11px] text-white/60 line-clamp-2">
-                              {r.why}
+                          <div className="min-w-0">
+                            <div className="font-medium text-sm truncate">
+                              {r.title}
                             </div>
-                          ) : null}
+                            <div className="text-xs text-white/50 truncate">
+                              {r.year ? r.year : ""}
+                            </div>
+                            {r.why ? (
+                              <div className="mt-1 text-[11px] text-white/60 line-clamp-2">
+                                {r.why}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  );
-                })}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          )}
-        </section>
-      ) : null}
+            )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+      </Tabs>
     </div>
   );
 }

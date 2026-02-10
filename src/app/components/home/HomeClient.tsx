@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 import FeedClient from "@/app/components/feed/FeedClient";
 import { supabase } from "@/lib/supabaseClient";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type TvItem = {
   tmdbId: number;
@@ -45,13 +48,13 @@ function topGenresFromGenreArrays(genreArrays: unknown[], maxGenres: number): st
 
 function CardSkeleton() {
   return (
-    <div className="w-[140px] sm:w-[160px] shrink-0 rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden">
+    <Card className="w-[140px] sm:w-[160px] shrink-0 overflow-hidden border-white/10 bg-white/[0.03]">
       <div className="aspect-[2/3] w-full bg-white/5 animate-pulse" />
-      <div className="p-3 space-y-2">
-        <div className="h-3 w-3/4 bg-white/5 animate-pulse rounded" />
-        <div className="h-3 w-1/2 bg-white/5 animate-pulse rounded" />
-      </div>
-    </div>
+      <CardContent className="p-3 h-[78px] flex flex-col">
+        <div className="h-3 w-3/4 rounded bg-white/5 animate-pulse" />
+        <div className="mt-auto h-3 w-1/2 rounded bg-white/5 animate-pulse" />
+      </CardContent>
+    </Card>
   );
 }
 
@@ -61,71 +64,121 @@ function CarouselRow({
   items,
   loading,
   error,
+  emptyMessage = "Rank more shows to unlock recommendations.",
 }: {
   title: string;
   subtitle?: string;
   items: TvItem[];
   loading: boolean;
   error: string | null;
+  emptyMessage?: string;
 }) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+
+  function scrollByCard(dir: -1 | 1) {
+    const el = scrollerRef.current;
+    if (!el) return;
+
+    // Scroll by ~3 cards (responsive)
+    const cardWidth = window.innerWidth < 640 ? 140 : 160;
+    const gap = 12; // gap-3
+    const delta = dir * (cardWidth + gap) * 3;
+    el.scrollBy({ left: delta, behavior: "smooth" });
+  }
+
   return (
-    <section className="space-y-3">
-      <div>
-        <h2 className="text-lg font-semibold">{title}</h2>
-        {subtitle ? <p className="text-sm text-white/60">{subtitle}</p> : null}
-      </div>
+    <Card className="border-white/10 bg-white/[0.02]">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <CardTitle className="text-base sm:text-lg">{title}</CardTitle>
+            {subtitle ? <p className="text-sm text-white/60">{subtitle}</p> : null}
+          </div>
 
-      {loading ? (
-        <div className="flex gap-3 overflow-x-auto pb-2">
-          {Array.from({ length: 10 }).map((_, i) => (
-            <CardSkeleton key={i} />
-          ))}
-        </div>
-      ) : error ? (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {error}
-        </div>
-      ) : items.length === 0 ? (
-        <div className="text-sm text-white/60">Rank more shows to unlock recommendations.</div>
-      ) : (
-        <div
-          className="flex gap-3 overflow-x-auto pb-2"
-        >
-          {items.map((s) => (
-            <Link
-              key={s.tmdbId}
-              href={`/show/${s.tmdbId}`}
-              className="group w-[140px] sm:w-[160px] shrink-0 rounded-2xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition overflow-hidden"
+          <div className="hidden sm:flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-9 px-3 bg-white/5 border border-white/10 text-white/80 hover:bg-white/10"
+              onClick={() => scrollByCard(-1)}
+              aria-label={`Scroll ${title} left`}
             >
-              <div className="aspect-[2/3] w-full bg-white/5">
-                {s.posterPath ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={posterUrl(s.posterPath)}
-                    alt=""
-                    className="h-full w-full object-cover"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="h-full w-full flex items-center justify-center text-xs text-white/40">
-                    No poster
-                  </div>
-                )}
-              </div>
-
-              <div className="p-3">
-                <div className="font-medium text-sm text-white line-clamp-2">
-                  {s.title}
-                </div>
-                <div className="mt-1 text-xs text-white/50">
-                  {s.year ? s.year : " "}
-                </div>
-              </div>
-            </Link>
-          ))}
+              ←
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-9 px-3 bg-white/5 border border-white/10 text-white/80 hover:bg-white/10"
+              onClick={() => scrollByCard(1)}
+              aria-label={`Scroll ${title} right`}
+            >
+              →
+            </Button>
+          </div>
         </div>
-      )}
-    </section>
+      </CardHeader>
+
+      <CardContent className="pt-0">
+        {loading ? (
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {Array.from({ length: 10 }).map((_, i) => (
+              <CardSkeleton key={i} />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            {error}
+          </div>
+        ) : items.length === 0 ? (
+          <div className="text-sm text-white/60">{emptyMessage}</div>
+        ) : (
+          <div
+            ref={scrollerRef}
+            className="flex gap-3 overflow-x-auto pb-2 scroll-smooth"
+            role="list"
+            aria-label={title}
+          >
+            {items.map((s) => (
+              <Link
+                key={s.tmdbId}
+                href={`/show/${s.tmdbId}`}
+                className="focus:outline-none"
+              >
+                <Card
+                  className="group w-[140px] sm:w-[160px] shrink-0 overflow-hidden border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition"
+                  role="listitem"
+                >
+                  <div className="aspect-[2/3] w-full bg-white/5">
+                    {s.posterPath ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={posterUrl(s.posterPath)}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="h-full w-full flex items-center justify-center text-xs text-white/40">
+                        No poster
+                      </div>
+                    )}
+                  </div>
+
+                  <CardContent className="p-3 h-[78px] flex flex-col">
+                    <div className="font-medium text-sm text-white line-clamp-2 leading-snug min-h-[36px]">
+                      {s.title}
+                    </div>
+                    <div className="mt-2 text-xs text-white/50 leading-none h-[14px]">
+                      {s.year ?? ""}
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -294,15 +347,16 @@ export default function HomeClient() {
   }, []);
 
   return (
-    <div className="space-y-8">
-      {/* Top discovery carousels */}
-      <div className="space-y-6">
+    <div className="space-y-6">
+      {/* Top discovery */}
+      <div className="space-y-4">
         <CarouselRow
           title="Recommended for you"
           subtitle="Based on your top genres."
           items={recs}
           loading={loadingRecs}
           error={errorRecs}
+          emptyMessage="Rank more shows to unlock recommendations."
         />
 
         <CarouselRow
@@ -311,6 +365,7 @@ export default function HomeClient() {
           items={trending}
           loading={loadingTrending}
           error={errorTrending}
+          emptyMessage="Nothing trending right now."
         />
 
         <CarouselRow
@@ -319,18 +374,20 @@ export default function HomeClient() {
           items={popular}
           loading={loadingPopular}
           error={errorPopular}
+          emptyMessage="Nothing popular right now."
         />
       </div>
 
       {/* Feed under discovery */}
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold">Friends feed</h2>
+      <Card className="border-white/10 bg-white/[0.02]">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base sm:text-lg">Friends feed</CardTitle>
           <p className="text-sm text-white/60">What your friends are ranking.</p>
-        </div>
-
-        <FeedClient />
-      </section>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <FeedClient />
+        </CardContent>
+      </Card>
     </div>
   );
 }

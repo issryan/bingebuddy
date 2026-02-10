@@ -12,6 +12,9 @@ import {
   type CompareSession,
 } from "@/core/logic/state";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Bookmark } from "lucide-react";
 import {
   addToWantToWatch,
   removeFromWantToWatchByTitle,
@@ -653,7 +656,7 @@ export default function LogExperience() {
         </div>
         <label className="block text-sm text-white/60">
           <span className="font-medium text-white/80">Show title</span>
-          <input
+          <Input
             value={title}
             onChange={(e) => {
               setTitle(e.target.value);
@@ -663,7 +666,6 @@ export default function LogExperience() {
             }}
             placeholder="e.g., The Boys"
             disabled={isComparing}
-            className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-base outline-none focus:border-white/30 disabled:opacity-60 disabled:cursor-not-allowed"
           />
         </label>
         {searchResults.length > 0 ? (
@@ -719,21 +721,23 @@ export default function LogExperience() {
 
         {!isComparing ? (
           <div className="space-y-3">
-            <button
+            <Button
               onClick={handleStart}
               disabled={isWorking || !!error}
-              className="w-full rounded-xl bg-white text-black font-medium px-4 py-3"
+              className="w-full"
             >
               {hasShows ? "Start comparison" : "Add first show"}
-            </button>
+            </Button>
 
-            <button
+            <Button
+              variant="outline"
               onClick={handleAddToWantToWatch}
               disabled={isWorking || !!error}
-              className="w-full rounded-xl bg-white/5 border border-white/10 font-medium px-4 py-3 text-white/90 hover:bg-white/10"
+              className="w-full flex items-center justify-center gap-2"
             >
-              Add to Want to Watch
-            </button>
+              <Bookmark className="h-4 w-4" />
+              Want to Watch
+            </Button>
           </div>
         ) : (
           <>
@@ -744,24 +748,22 @@ export default function LogExperience() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={handleUndo}
                     disabled={undoStack.length === 0 || isWorking}
-                    title={undoStack.length === 0 ? "Nothing to undo yet" : "Undo last step"}
-                    className="rounded-xl bg-white/5 border border-white/10 font-medium px-3 py-2 text-sm text-white/80 hover:bg-white/10 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     Undo
-                  </button>
-
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={handleSkip}
                     disabled={isWorking}
-                    className="rounded-xl bg-white/5 border border-white/10 font-medium px-3 py-2 text-sm text-white/80 hover:bg-white/10"
                   >
                     Skip
-                  </button>
+                  </Button>
                 </div>
               </div>
 
@@ -769,29 +771,29 @@ export default function LogExperience() {
                 "grid grid-cols-1 sm:grid-cols-2 gap-3 transition-opacity " +
                 (isWorking ? "opacity-60 pointer-events-none" : "")
               }>
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
                   onClick={() => handleAnswer("new")}
                   disabled={isWorking}
-                  className="group rounded-2xl border border-white/15 bg-white/5 px-5 py-7 text-left hover:bg-white/10 hover:border-white/25 focus:outline-none focus:ring-2 focus:ring-white/30 active:scale-[0.99]"
+                  className="h-auto w-full justify-start px-5 py-7 text-left"
                   aria-label={`Choose ${title.trim()}`}
                 >
                   <div className="mt-2 text-2xl font-semibold text-white break-words">
                     {title.trim()}
                   </div>
-                </button>
+                </Button>
 
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
                   onClick={() => handleAnswer("existing")}
                   disabled={isWorking}
-                  className="group rounded-2xl border border-white/15 bg-white/5 px-5 py-7 text-left hover:bg-white/10 hover:border-white/25 focus:outline-none focus:ring-2 focus:ring-white/30 active:scale-[0.99]"
+                  className="h-auto w-full justify-start px-5 py-7 text-left"
                   aria-label={`Choose ${comparisonShow?.title ?? "existing show"}`}
                 >
                   <div className="mt-2 text-2xl font-semibold text-white break-words">
                     {comparisonShow?.title}
                   </div>
-                </button>
+                </Button>
               </div>
             </div>
 
