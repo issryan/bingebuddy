@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getRankedShows, getState } from "@/core/logic/state";
 import { supabase } from "@/lib/supabaseClient";
-import { addToWantToWatch, isTmdbAlreadyInWantToWatch } from "@/core/storage/wantToWatchStorage";
+import { Button } from "@/components/ui/button";
+import { Bookmark } from "lucide-react";
 
 const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
 
@@ -74,14 +75,11 @@ export default function ShowDetailsPage() {
       setCheckingLists(true);
       setListMessage(null);
 
-      // Local fallback (My List reads from localStorage)
-      const localHasWtw = isTmdbAlreadyInWantToWatch(nextTmdbId);
-
       const { data } = await supabase.auth.getSession();
       const userId = data.session?.user?.id ?? null;
       if (!userId) {
-        // Not signed in -> show local status only.
-        setIsInWantToWatch(localHasWtw);
+        // Not signed in -> we can't check lists
+        setIsInWantToWatch(false);
         setIsRankedInDb(false);
         return;
       }
@@ -99,13 +97,11 @@ export default function ShowDetailsPage() {
           .eq("tmdb_id", nextTmdbId),
       ]);
 
-      // If these fail due to RLS or auth, just treat as not present.
       const rankedCount = rankedRes.error ? 0 : (rankedRes.count ?? 0);
       const wtwCount = wtwRes.error ? 0 : (wtwRes.count ?? 0);
 
       setIsRankedInDb(rankedCount > 0);
-      // Consider localStorage OR DB
-      setIsInWantToWatch(localHasWtw || wtwCount > 0);
+      setIsInWantToWatch(wtwCount > 0);
     } finally {
       setCheckingLists(false);
     }
@@ -164,25 +160,6 @@ export default function ShowDetailsPage() {
     const userId = await requireUserId();
     if (!userId) return;
 
-    // Add to localStorage (this is what My List uses)
-    const rankedNow = getRankedShows(getState());
-    const localRes = addToWantToWatch(rankedNow as any, {
-      title: details?.title ?? "",
-      tmdbId: details?.tmdbId ?? null,
-      posterPath: details?.posterPath ?? null,
-      year: details?.year ?? null,
-      genres: details?.genres ?? [],
-      overview: details?.overview ?? "",
-      createdAt: Date.now(),
-    });
-
-    if (!localRes.ok) {
-      setListMessage(localRes.error);
-      return;
-    }
-
-    setIsInWantToWatch(true);
-
     if (!details || !Number.isFinite(details.tmdbId)) {
       setListMessage("Missing show details. Try again.");
       return;
@@ -197,7 +174,6 @@ export default function ShowDetailsPage() {
     try {
       setCheckingLists(true);
 
-      // Best-effort: also persist to Supabase so it syncs across devices.
       // Upsert show metadata so other screens can render it reliably.
       const showRow = {
         user_id: userId,
@@ -218,26 +194,26 @@ export default function ShowDetailsPage() {
         return;
       }
 
-      // Add to want_to_watch (best-effort idempotent)
+      // Add to want_to_watch (idempotent if you have a unique constraint on (user_id, tmdb_id))
       const upsertWtw = await supabase
         .from("want_to_watch")
         .upsert([{ user_id: userId, tmdb_id: details.tmdbId }], {
-          // If you have a unique constraint on (user_id, tmdb_id), this works.
-          // If you don’t, Supabase will return an error; we fallback to insert.
           onConflict: "user_id,tmdb_id",
         });
 
       if (upsertWtw.error) {
+        // Fallback: insert (in case onConflict isn't supported by your table)
         const ins = await supabase
           .from("want_to_watch")
           .insert([{ user_id: userId, tmdb_id: details.tmdbId }]);
+
         if (ins.error) {
           setListMessage(ins.error.message);
           return;
         }
       }
 
-      setIsInWantToWatch(true);
+      await refreshListStatus(details.tmdbId);
       setListMessage("Added to Want to Watch.");
     } finally {
       setCheckingLists(false);
@@ -248,68 +224,9 @@ export default function ShowDetailsPage() {
   const heroImg = imgUrl(details?.posterPath, "w500");
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-4">
-      {/* Top bar */}
-      <div className="flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm font-medium text-white/80 hover:bg-white/10"
-        >
-          ← Back
-        </button>
-
-        <div className="flex items-center gap-2">
-          {rankedMatch ? (
-            <>
-              <span className="text-sm text-white/60">Ranked</span>
-              <span className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm font-semibold text-white">
-                #{rankedMatch.rank}
-              </span>
-            </>
-          ) : isInWantToWatch ? (
-            <span className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm font-semibold text-white">
-              In Want to Watch
-            </span>
-          ) : (
-            <span className="text-sm text-white/50">Not ranked yet</span>
-          )}
-
-          {!rankedMatch ? (
-            <button
-              type="button"
-              onClick={onClickRank}
-              className="rounded-xl bg-white text-black px-3 py-2 text-sm font-semibold"
-            >
-              Rank
-            </button>
-          ) : null}
-
-          <button
-            type="button"
-            onClick={onClickWantToWatch}
-            disabled={checkingLists || isInWantToWatch || !!rankedMatch || isRankedInDb}
-            className={
-              "rounded-xl border px-3 py-2 text-sm font-semibold " +
-              (isInWantToWatch || rankedMatch || isRankedInDb
-                ? "bg-white/5 border-white/10 text-white/50"
-                : "bg-white/10 border-white/15 text-white hover:bg-white/15")
-            }
-            title={
-              rankedMatch || isRankedInDb
-                ? "Already ranked"
-                : isInWantToWatch
-                ? "Already in Want to Watch"
-                : "Add to Want to Watch"
-            }
-          >
-            {isInWantToWatch ? "Added" : "Want to Watch"}
-          </button>
-        </div>
-      </div>
-
+    <div className="mx-auto w-full max-w-4xl space-y-6">
       {/* Hero */}
-      <section className="relative overflow-hidden rounded-2xl border border-white/15 bg-white/[0.03]">
+      <section className="relative overflow-hidden rounded-3xl border border-white/15 bg-white/[0.03]">
         {/* Blurred backdrop */}
         {heroImg ? (
           <div
@@ -318,50 +235,86 @@ export default function ShowDetailsPage() {
               backgroundImage: `url(${heroImg})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
-              filter: "blur(24px)",
-              transform: "scale(1.1)",
+              filter: "blur(26px)",
+              transform: "scale(1.12)",
               opacity: 0.35,
             }}
           />
         ) : null}
 
-        {/* Dark overlay */}
-        <div className="absolute inset-0 bg-black/60" />
+        {/* Overlay */}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/70 to-black/85" />
+
+        {/* Top controls */}
+        <div className="relative z-10 flex items-center justify-between gap-3 p-4 sm:p-5">
+          <Button variant="secondary" onClick={() => router.back()} className="rounded-2xl">
+            ← Back
+          </Button>
+
+          <div className="flex items-center gap-2">
+            {!rankedMatch ? (
+              <Button onClick={onClickRank} className="rounded-2xl">
+                Rank
+              </Button>
+            ) : null}
+
+            <Button
+              type="button"
+              onClick={onClickWantToWatch}
+              disabled={checkingLists || isInWantToWatch || !!rankedMatch || isRankedInDb}
+              variant={isInWantToWatch || rankedMatch || isRankedInDb ? "secondary" : "outline"}
+              title={
+                rankedMatch || isRankedInDb
+                  ? "Already ranked"
+                  : isInWantToWatch
+                  ? "Already in Want to Watch"
+                  : "Add to Want to Watch"
+              }
+              className={(isInWantToWatch || rankedMatch || isRankedInDb ? "opacity-60 " : "") + "rounded-2xl"}
+            >
+              <Bookmark className="h-4 w-4" />
+              <span className="ml-2 hidden sm:inline">
+                {isInWantToWatch ? "Saved" : "Want to Watch"}
+              </span>
+            </Button>
+          </div>
+        </div>
 
         {/* Content */}
-        <div className="relative p-5 sm:p-6">
+        <div className="relative z-10 px-4 pb-5 sm:px-5 sm:pb-6">
           {isLoading ? (
             <div className="space-y-4">
               <div className="h-6 w-2/3 rounded bg-white/10" />
               <div className="h-4 w-1/2 rounded bg-white/10" />
-              <div className="h-40 w-full rounded-2xl bg-white/10" />
+              <div className="h-52 w-full rounded-3xl bg-white/10" />
               <div className="h-4 w-full rounded bg-white/10" />
               <div className="h-4 w-5/6 rounded bg-white/10" />
             </div>
           ) : error ? (
-            <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
               {error}
             </div>
           ) : details ? (
-            <div className="grid grid-cols-1 sm:grid-cols-[150px,1fr] gap-5">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-[160px,1fr] sm:gap-6">
               {/* Poster */}
               <div className="shrink-0">
                 {poster ? (
                   <img
                     src={poster}
                     alt=""
-                    className="w-[150px] h-[225px] rounded-2xl bg-white/10 object-cover"
+                    className="w-[160px] h-[240px] rounded-3xl bg-white/10 object-cover"
                   />
                 ) : (
-                  <div className="w-[150px] h-[225px] rounded-2xl bg-white/10" />
+                  <div className="w-[160px] h-[240px] rounded-3xl bg-white/10" />
                 )}
               </div>
 
-              {/* Right side */}
-              <div className="min-w-0 space-y-3">
+              {/* Details */}
+              <div className="min-w-0 space-y-4">
+                {/* Title row */}
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <h1 className="text-3xl font-semibold leading-tight break-words">
+                    <h1 className="text-3xl sm:text-4xl font-semibold leading-tight break-words">
                       {details.title}
                     </h1>
                     <div className="mt-1 text-sm text-white/70">
@@ -383,10 +336,34 @@ export default function ShowDetailsPage() {
                   ) : null}
                 </div>
 
+                {/* Status + quick info */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {rankedMatch ? (
+                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/80">
+                      Ranked #{rankedMatch.rank}
+                    </span>
+                  ) : isInWantToWatch ? (
+                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/80">
+                      In Want to Watch
+                    </span>
+                  ) : (
+                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/60">
+                      Not ranked yet
+                    </span>
+                  )}
+
+                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/70">
+                    Seasons: {typeof details.seasons === "number" ? details.seasons : "—"}
+                  </span>
+                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/70">
+                    Episodes: {typeof details.episodes === "number" ? details.episodes : "—"}
+                  </span>
+                </div>
+
                 {/* Genres */}
                 {details.genres && details.genres.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
-                    {details.genres.slice(0, 6).map((g) => (
+                    {details.genres.slice(0, 8).map((g) => (
                       <span
                         key={g}
                         className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/85"
@@ -397,32 +374,20 @@ export default function ShowDetailsPage() {
                   </div>
                 ) : null}
 
-                {/* Overview preview */}
+                {/* Overview */}
                 <p className="text-sm text-white/75 leading-relaxed">
-                  {details.overview
-                    ? details.overview
-                    : "No description available."}
+                  {details.overview ? details.overview : "No description available."}
                 </p>
 
-                {/* Mini stats row */}
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <span className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-white/70">
-                    Seasons: {typeof details.seasons === "number" ? details.seasons : "—"}
-                  </span>
-                  <span className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-white/70">
-                    Episodes: {typeof details.episodes === "number" ? details.episodes : "—"}
-                  </span>
-                </div>
+                {/* Message */}
+                {listMessage ? (
+                  <div className="text-xs text-white/60">{listMessage}</div>
+                ) : null}
 
+                {/* Hint */}
                 {!rankedMatch ? (
-                  <div className="space-y-2">
-                    <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/75">
-                      Rank it now, or save it for later.
-                    </div>
-
-                    {listMessage ? (
-                      <div className="text-xs text-white/60">{listMessage}</div>
-                    ) : null}
+                  <div className="rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/75">
+                    Rank it now, or save it for later.
                   </div>
                 ) : null}
               </div>
@@ -442,7 +407,7 @@ export default function ShowDetailsPage() {
                 {details.cast.slice(0, 12).map((name) => (
                   <div
                     key={name}
-                    className="shrink-0 rounded-2xl border border-white/15 bg-white/5 px-4 py-3"
+                    className="shrink-0 rounded-3xl border border-white/15 bg-white/5 px-4 py-3"
                   >
                     <div className="text-sm font-medium text-white/90">{name}</div>
                     <div className="mt-0.5 text-xs text-white/50">Cast</div>

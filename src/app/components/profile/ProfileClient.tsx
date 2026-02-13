@@ -123,6 +123,12 @@ export default function ProfileClient() {
   const [myEventsLoading, setMyEventsLoading] = useState(false);
   const [myEventsError, setMyEventsError] = useState<string | null>(null);
 
+  // Delete account (danger zone)
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteInput, setDeleteInput] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   // Always show the *current* derived rating from the live ranked list
   const ratingByTmdbId = useMemo(() => {
     const ranked = getRankedShows(getState());
@@ -352,6 +358,62 @@ export default function ProfileClient() {
     }
   }, []);
 
+  const handleDeleteAccount = useCallback(async () => {
+    setDeleteError(null);
+
+    // Simple, explicit confirmation phrase
+    if (deleteInput.trim().toLowerCase() !== "delete") {
+      setDeleteError('Type "delete" to confirm.');
+      return;
+    }
+
+    try {
+      setDeleteLoading(true);
+
+      // Grab an access token so the API route can identify the caller
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token ?? null;
+
+      if (!token) {
+        setDeleteError("Not authenticated.");
+        return;
+      }
+
+      const res = await fetch("/api/account/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ confirm: "delete" }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setDeleteError(
+          typeof json?.error === "string" && json.error
+            ? json.error
+            : "Couldn’t delete your account. Try again."
+        );
+        return;
+      }
+
+      // Sign out + bounce to login (session will be invalid anyway)
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // ignore
+      }
+
+      window.location.href = "/login";
+    } catch {
+      setDeleteError("Couldn’t delete your account. Try again.");
+    } finally {
+      setDeleteLoading(false);
+    }
+  }, [deleteInput]);
+
   return (
     <div className="space-y-6">
       {/* Header card (Beli-ish) */}
@@ -569,6 +631,79 @@ export default function ProfileClient() {
             })}
           </div>
         )}
+      </section>
+
+      {/* Danger zone */}
+      <section className="rounded-2xl border border-red-500/25 bg-red-500/[0.05] p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-red-200">Danger zone</h2>
+            <p className="mt-1 text-sm text-white/60">
+              Delete your account and all your data (ranked shows, want to watch, friendships, activity).
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteOpen(true);
+              setDeleteInput("");
+              setDeleteError(null);
+            }}
+            className="rounded-xl bg-red-500/15 border border-red-500/30 px-3 py-2 text-sm font-semibold text-red-200 hover:bg-red-500/20"
+          >
+            Delete account
+          </button>
+        </div>
+
+        {deleteOpen ? (
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/40 p-4">
+            <div className="text-sm text-white/80 font-medium">This can’t be undone.</div>
+            <div className="mt-1 text-xs text-white/60">
+              Type <span className="font-semibold text-white">delete</span> to confirm.
+            </div>
+
+            <div className="mt-3 flex flex-col sm:flex-row gap-3">
+              <input
+                value={deleteInput}
+                onChange={(e) => {
+                  setDeleteInput(e.target.value);
+                  if (deleteError) setDeleteError(null);
+                }}
+                placeholder='Type "delete"'
+                className="flex-1 rounded-xl bg-white/5 border border-white/10 px-4 py-3 outline-none focus:border-white/30"
+              />
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (deleteLoading) return;
+                    setDeleteOpen(false);
+                    setDeleteInput("");
+                    setDeleteError(null);
+                  }}
+                  className="rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm font-medium text-white/80 hover:bg-white/10"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDeleteAccount}
+                  disabled={deleteLoading}
+                  className="rounded-xl bg-red-500 text-black px-4 py-3 text-sm font-semibold disabled:opacity-60"
+                >
+                  {deleteLoading ? "Deleting…" : "Confirm delete"}
+                </button>
+              </div>
+            </div>
+
+            {deleteError ? (
+              <div className="mt-3 text-sm text-red-200">{deleteError}</div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
     </div>
   );

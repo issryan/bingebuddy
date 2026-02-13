@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 // Keep the types local so Supabase calls don't infer `never`.
 // (We haven't generated DB types yet.)
@@ -31,6 +33,11 @@ export default function OnboardingClient() {
     const [username, setUsername] = useState("");
     const [displayName, setDisplayName] = useState("");
 
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [usernameStatus, setUsernameStatus] = useState<
+      "idle" | "invalid" | "checking" | "available" | "taken"
+    >("idle");
+
     const [error, setError] = useState<string | null>(null);
 
     const normalized = useMemo(() => normalizeUsername(username), [username]);
@@ -48,6 +55,8 @@ export default function OnboardingClient() {
                 router.replace("/login");
                 return;
             }
+
+            setCurrentUserId(user.id);
 
             // Ensure profile exists
             await supabase.from("profiles").upsert({ user_id: user.id }, { onConflict: "user_id" });
@@ -94,6 +103,57 @@ export default function OnboardingClient() {
         void boot();
     }, [router]);
 
+    useEffect(() => {
+      // Live availability check (debounced)
+      if (!normalized) {
+        setUsernameStatus("idle");
+        return;
+      }
+
+      if (!usernameOk) {
+        setUsernameStatus("invalid");
+        return;
+      }
+
+      if (!currentUserId) {
+        // We can't reliably check ownership until we know who is signed in.
+        setUsernameStatus("checking");
+        return;
+      }
+
+      const controller = new AbortController();
+      const t = setTimeout(async () => {
+        try {
+          setUsernameStatus("checking");
+
+          const { data, error } = await supabase
+            .from("profiles")
+            .select("user_id")
+            .eq("username", normalized)
+            .maybeSingle();
+
+          if (error) {
+            // Don't hard-fail the UI; keep it neutral.
+            setUsernameStatus("available");
+            return;
+          }
+
+          if (data?.user_id && String(data.user_id) !== currentUserId) {
+            setUsernameStatus("taken");
+          } else {
+            setUsernameStatus("available");
+          }
+        } catch {
+          // If the request was aborted or anything else, do nothing noisy.
+        }
+      }, 350);
+
+      return () => {
+        clearTimeout(t);
+        controller.abort();
+      };
+    }, [normalized, usernameOk, currentUserId]);
+
     async function save() {
         setError(null);
 
@@ -104,6 +164,10 @@ export default function OnboardingClient() {
         }
         if (!isValidUsername(u)) {
             setError("Username must be 3–20 characters and only use letters, numbers, and underscores.");
+            return;
+        }
+        if (usernameStatus === "taken") {
+            setError("That username is taken. Try another.");
             return;
         }
 
@@ -168,55 +232,149 @@ export default function OnboardingClient() {
     }
 
     if (loading) {
-        return (
-            <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-6 text-white/70">
-                Loading…
+      return (
+        <div className="mx-auto w-full max-w-lg">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+            <div className="h-5 w-40 rounded bg-white/10" />
+            <div className="mt-3 h-4 w-72 rounded bg-white/10" />
+            <div className="mt-6 space-y-3">
+              <div className="h-10 w-full rounded bg-white/10" />
+              <div className="h-10 w-full rounded bg-white/10" />
+              <div className="h-10 w-full rounded bg-white/10" />
             </div>
-        );
+          </div>
+        </div>
+      );
     }
 
     return (
-        <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-6 space-y-4">
-            <label className="block text-sm text-white/70">
-                Username
-                <input
-                    value={username}
-                    onChange={(e) => {
-                        setUsername(e.target.value);
-                        if (error) setError(null);
-                    }}
-                    placeholder="e.g. ryan_123"
-                    className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 outline-none focus:border-white/30"
-                />
-                <div className="mt-2 text-xs text-white/50">
-                    3–20 characters. Letters, numbers, underscores.
-                </div>
-            </label>
+      <div className="mx-auto w-full max-w-lg">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+          <div className="space-y-1">
+            <h1 className="text-xl font-semibold">Finish setup</h1>
+            <p className="text-sm text-white/60">Pick a username so friends can find you.</p>
+          </div>
 
-            <label className="block text-sm text-white/70">
-                Name (optional)
-                <input
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    placeholder="Ryan"
-                    className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 outline-none focus:border-white/30"
-                />
-            </label>
+          <div className="mt-6 space-y-5">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-white/80">Username</label>
+              <Input
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  if (error) setError(null);
+                }}
+                placeholder="e.g. issryan"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="h-11"
+              />
+
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-white/50">3–20 chars · letters, numbers, _</span>
+
+                <span
+                  className={
+                    username.length === 0
+                      ? "text-white/40"
+                      : usernameStatus === "available"
+                      ? "text-emerald-300/90"
+                      : usernameStatus === "taken"
+                      ? "text-red-300/90"
+                      : usernameStatus === "invalid"
+                      ? "text-amber-300/90"
+                      : "text-white/60"
+                  }
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    {username.length === 0 ? "@preview" : `@${normalized}`}
+
+                    {username.length > 0 && usernameStatus === "available" ? (
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 20 20"
+                        className="h-4 w-4"
+                        fill="currentColor"
+                      >
+                        <path
+                          fillRule="evenodd"
+                          d="M16.704 5.293a1 1 0 010 1.414l-7.5 7.5a1 1 0 01-1.414 0l-3.5-3.5a1 1 0 111.414-1.414l2.793 2.793 6.793-6.793a1 1 0 011.414 0z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    ) : null}
+
+                    {username.length > 0 && usernameStatus === "taken" ? (
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 20 20"
+                        className="h-4 w-4"
+                        fill="currentColor"
+                      >
+                        <path
+                          fillRule="evenodd"
+                          d="M10 18a8 8 0 100-16 8 8 0 000 16zm2.707-10.707a1 1 0 00-1.414-1.414L10 7.172 8.707 5.879a1 1 0 00-1.414 1.414L8.586 8.586l-1.293 1.293a1 1 0 101.414 1.414L10 10l1.293 1.293a1 1 0 001.414-1.414L11.414 8.586l1.293-1.293z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    ) : null}
+
+                    {username.length > 0 && usernameStatus === "checking" ? (
+                      <span className="inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
+                    ) : null}
+                  </span>
+                </span>
+              </div>
+
+              {username.length > 0 && usernameStatus === "invalid" ? (
+                <div className="text-xs text-amber-300/90">
+                  Keep it lowercase and use only letters, numbers, or underscores.
+                </div>
+              ) : null}
+
+              {username.length > 0 && usernameStatus === "taken" ? (
+                <div className="text-xs text-red-300/90">Username is already taken.</div>
+              ) : null}
+
+              {username.length > 0 && usernameStatus === "available" ? (
+                <div className="text-xs text-emerald-300/90">Username is available.</div>
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-white/80">Name (optional)</label>
+              <Input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Ryan"
+                className="h-11"
+              />
+              <div className="text-xs text-white/50">This can be changed later.</div>
+            </div>
 
             {error ? (
-                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-300">
-                    {error}
-                </div>
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                {error}
+              </div>
             ) : null}
 
-            <button
+            <div className="flex flex-col gap-3">
+              <Button
                 type="button"
                 onClick={save}
-                disabled={saving || !usernameOk}
-                className="w-full rounded-xl bg-white text-black font-medium px-4 py-3 disabled:opacity-60"
-            >
+                disabled={saving || !usernameOk || usernameStatus !== "available"}
+                className="h-11"
+              >
                 {saving ? "Saving…" : "Continue"}
-            </button>
+              </Button>
+
+              <div className="text-xs text-white/45">
+                Usernames are lowercase for now.
+              </div>
+            </div>
+          </div>
         </div>
+      </div>
     );
 }

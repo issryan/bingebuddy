@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export default function AuthClient() {
   const router = useRouter();
@@ -13,6 +17,7 @@ export default function AuthClient() {
   const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
 
   async function refreshSession() {
     const { data } = await supabase.auth.getSession();
@@ -135,81 +140,107 @@ export default function AuthClient() {
   }
 
   return (
-    <div className="w-full max-w-md mx-auto rounded-2xl border border-white/15 bg-white/[0.03] p-5">
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold">Account</h2>
-        <p className="text-sm text-white/60">Sign in to sync and use social features.</p>
-      </div>
+    <div className="mx-auto w-full max-w-md px-4">
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 shadow-sm">
+        <div className="space-y-1">
+          <div className="text-xs font-semibold tracking-wider text-white/60">BingeBuddy</div>
+          <h1 className="text-2xl font-semibold tracking-tight">Sign in to sync your lists</h1>
+          <p className="text-sm text-white/60">
+            Keep your rankings, want-to-watch, and friends feed consistent across devices.
+          </p>
+        </div>
 
-      <div className="mt-4 space-y-4">
-        {sessionEmail ? (
-          <>
-            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-              <div className="text-xs text-white/60">Signed in as</div>
-              <div className="mt-1 text-base font-semibold break-all">{sessionEmail}</div>
-            </div>
+        <div className="mt-6 space-y-4">
+          {sessionEmail ? (
+            <>
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                <div className="text-xs text-white/60">Signed in as</div>
+                <div className="mt-1 text-sm font-medium text-white break-all">{sessionEmail}</div>
+              </div>
 
-            <button
-              onClick={signOut}
-              disabled={loading}
-              className="w-full rounded-xl bg-white/10 border border-white/15 px-4 py-3 font-medium disabled:opacity-60"
+              <div className="grid grid-cols-2 gap-3">
+                <Button asChild className="w-full">
+                  <Link href="/home">Go to Home</Link>
+                </Button>
+
+                <Button
+                  type="button"
+                  onClick={signOut}
+                  disabled={loading}
+                  variant="secondary"
+                  className="w-full"
+                >
+                  {loading ? "Signing out…" : "Sign out"}
+                </Button>
+              </div>
+
+              <p className="text-xs text-white/50">You’re all set. Go binge something.</p>
+            </>
+          ) : (
+            <>
+              <Tabs value={mode} onValueChange={(v) => setMode(v as any)} className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="signin">Sign in</TabsTrigger>
+                  <TabsTrigger value="signup">Sign up</TabsTrigger>
+                </TabsList>
+
+                <div className="mt-4 space-y-3">
+                  <label className="block text-sm text-white/70">
+                    Email
+                    <Input
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      className="mt-2"
+                    />
+                  </label>
+
+                  <label className="block text-sm text-white/70">
+                    Password
+                    <Input
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      type="password"
+                      autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                      className="mt-2"
+                    />
+                  </label>
+                </div>
+
+                <TabsContent value="signin" className="mt-4">
+                  <Button type="button" onClick={signIn} disabled={loading} className="w-full">
+                    {loading ? "Signing in…" : "Sign in"}
+                  </Button>
+                  <p className="mt-3 text-xs text-white/50">
+                    New here? Switch to <span className="text-white/70">Sign up</span>.
+                  </p>
+                </TabsContent>
+
+                <TabsContent value="signup" className="mt-4">
+                  <Button type="button" onClick={signUp} disabled={loading} className="w-full">
+                    {loading ? "Creating…" : "Create account"}
+                  </Button>
+                  <p className="mt-3 text-xs text-white/50">
+                    You may need to confirm your email before your first sign in.
+                  </p>
+                </TabsContent>
+              </Tabs>
+            </>
+          )}
+
+          {message ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 text-sm text-white/80"
             >
-              {loading ? "Signing out…" : "Sign out"}
-            </button>
-          </>
-        ) : (
-          <>
-            <div className="space-y-3">
-              <label className="block text-sm text-white/70">
-                Email
-                <input
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  type="email"
-                  inputMode="email"
-                  autoComplete="email"
-                  className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 outline-none focus:border-white/30"
-                />
-              </label>
-
-              <label className="block text-sm text-white/70">
-                Password
-                <input
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  type="password"
-                  autoComplete="current-password"
-                  className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 outline-none focus:border-white/30"
-                />
-              </label>
+              {message}
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={signUp}
-                disabled={loading}
-                className="rounded-xl bg-white text-black font-medium px-4 py-3 disabled:opacity-60"
-              >
-                {loading ? "…" : "Sign up"}
-              </button>
-
-              <button
-                onClick={signIn}
-                disabled={loading}
-                className="rounded-xl bg-white/10 border border-white/15 font-medium px-4 py-3 disabled:opacity-60"
-              >
-                {loading ? "…" : "Sign in"}
-              </button>
-            </div>
-          </>
-        )}
-
-        {message ? <div className="text-sm text-white/70">{message}</div> : null}
-
-        <div className="text-xs text-white/40">
-          If you just signed up and you don’t see a session, you probably need email confirmation.
+          ) : null}
         </div>
       </div>
     </div>
