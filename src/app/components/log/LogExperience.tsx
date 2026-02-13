@@ -23,6 +23,7 @@ import {
 import { safeGetWantToWatch } from "@/core/storage/wantToWatchStorage";
 import { createRankCompletedEvent, saveToBackend } from "@/core/storage/backendSync";
 import { supabase } from "@/lib/supabaseClient";
+const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
 
 
 
@@ -96,6 +97,8 @@ export default function LogExperience() {
   const [searchResults, setSearchResults] = useState<TmdbSearchItem[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [selectedTmdbId, setSelectedTmdbId] = useState<number | null>(null);
+  // Track the TMDB id for the show we are ranking so we can de-dupe by id (not title)
+  const [pendingTmdbId, setPendingTmdbId] = useState<number | null>(null);
   const [selectedMeta, setSelectedMeta] = useState<{
     tmdbId: number;
     posterPath: string | null;
@@ -168,12 +171,14 @@ export default function LogExperience() {
 
       setTitle(details.title);
       setSelectedTmdbId(details.tmdbId);
+      setPendingTmdbId(details.tmdbId);
       setSearchResults([]);
       setError(null);
     } catch {
       // fallback to title-only
       setTitle(item.title);
       setSelectedTmdbId(item.tmdbId);
+      setPendingTmdbId(item.tmdbId);
       setSearchResults([]);
       setError(null);
     }
@@ -185,13 +190,26 @@ export default function LogExperience() {
     return state.shows[session.compareIndex] ?? null;
   }, [session]);
 
+  const newShowPoster = useMemo(() => {
+    const p = selectedMeta?.posterPath ?? null;
+    return p ? `${TMDB_IMG_BASE}/w185${p}` : null;
+  }, [selectedMeta?.posterPath]);
+
+  const existingShowPoster = useMemo(() => {
+    const p = (comparisonShow as any)?.posterPath ?? null;
+    return typeof p === "string" && p ? `${TMDB_IMG_BASE}/w185${p}` : null;
+  }, [comparisonShow]);
+
   function goToSavedScreen(savedTitle: string) {
     const nextRanked = getRankedShows(getState());
     setRanked(nextRanked);
 
-    const index = nextRanked.findIndex(
-      (s) => s.title.trim().toLowerCase() === savedTitle.trim().toLowerCase()
-    );
+    const index =
+      typeof pendingTmdbId === "number" && Number.isFinite(pendingTmdbId)
+        ? nextRanked.findIndex((s: any) => typeof s.tmdbId === "number" && s.tmdbId === pendingTmdbId)
+        : nextRanked.findIndex(
+          (s) => s.title.trim().toLowerCase() === savedTitle.trim().toLowerCase()
+        );
 
     const params = new URLSearchParams();
     params.set("title", savedTitle);
@@ -229,12 +247,15 @@ export default function LogExperience() {
     }
 
     // Once ranked, remove from Want to Watch (prefer tmdbId when available)
-    const match = nextRanked.find(
-      (s) => s.title.trim().toLowerCase() === savedTitle.trim().toLowerCase()
-    );
+    const match =
+      typeof pendingTmdbId === "number" && Number.isFinite(pendingTmdbId)
+        ? nextRanked.find((s: any) => typeof s.tmdbId === "number" && s.tmdbId === pendingTmdbId)
+        : nextRanked.find(
+          (s) => s.title.trim().toLowerCase() === savedTitle.trim().toLowerCase()
+        );
 
-    if (match && typeof match.tmdbId === "number") {
-      removeFromWantToWatchByTmdbId(match.tmdbId);
+    if (match && typeof (match as any).tmdbId === "number") {
+      removeFromWantToWatchByTmdbId((match as any).tmdbId);
     } else {
       removeFromWantToWatchByTitle(savedTitle);
     }
@@ -242,6 +263,7 @@ export default function LogExperience() {
     // Clear metadata after save
     setSelectedMeta(null);
     setSelectedTmdbId(null);
+    setPendingTmdbId(null);
 
     // Tell the sync layer we changed local data (ranked list + want-to-watch removal)
     notifyStateChanged();
@@ -349,6 +371,7 @@ export default function LogExperience() {
         overview: details.overview ?? "",
         genres: details.genres ?? [],
       });
+      setPendingTmdbId(details.tmdbId);
 
       // Canonical title from TMDB
       if (typeof details.title === "string" && details.title.trim()) {
@@ -369,9 +392,20 @@ export default function LogExperience() {
       return;
     }
 
-    // Prevent ranking duplicates
+    // Always resolve TMDB metadata first so we can de-dupe by tmdbId (never by title)
+    const metaOpts = await ensureMetaForStart();
+    const candidateTmdbId =
+      typeof metaOpts?.tmdbId === "number" && Number.isFinite(metaOpts.tmdbId)
+        ? metaOpts.tmdbId
+        : null;
+
+    if (candidateTmdbId === null) {
+      setError("Pick the exact show from the search results so we can attach the right TMDB id.");
+      return;
+    }
+
     const alreadyRanked = ranked.some(
-      (s) => s.title.trim().toLowerCase() === clean.toLowerCase()
+      (s: any) => typeof s.tmdbId === "number" && Number.isFinite(s.tmdbId) && s.tmdbId === candidateTmdbId
     );
 
     if (alreadyRanked) {
@@ -379,16 +413,16 @@ export default function LogExperience() {
       return;
     }
 
-    const metaOpts = await ensureMetaForStart();
+    // Track what we're ranking so later steps (save/event) resolve the correct entry
+    setPendingTmdbId(candidateTmdbId);
 
-    if (!metaOpts || typeof metaOpts.tmdbId !== "number") {
-      setError("Pick a show from the search results so we can attach the right metadata.");
+    if (!metaOpts) {
+      setError("Pick the exact show from the search results so we can attach the right metadata.");
       return;
     }
 
     if (ranked.length === 0) {
       addFirstShow(clean, metaOpts);
-      // Tell the sync layer we changed local data (ranked list)
       notifyStateChanged();
       void saveSnapshotToCloud();
       setTitle("");
@@ -400,7 +434,10 @@ export default function LogExperience() {
     }
 
     const s = startComparisonSession(clean, metaOpts);
-    if (!s) return;
+    if (!s) {
+      setError("That show is already ranked.");
+      return;
+    }
 
     setSession(s);
     setUndoStack([]);
@@ -583,10 +620,16 @@ export default function LogExperience() {
               if (auto) {
                 const clean = String(details.title).trim();
 
-                // Prevent ranking duplicates
-                const alreadyRanked = ranked.some(
-                  (s) => s.title.trim().toLowerCase() === clean.toLowerCase()
-                );
+                // Prevent ranking duplicates (tmdbId-first; title fallback)
+                const candidateTmdbId = typeof details.tmdbId === "number" ? details.tmdbId : null;
+
+                const alreadyRanked =
+                  typeof candidateTmdbId === "number" && Number.isFinite(candidateTmdbId)
+                    ? ranked.some((s: any) => typeof s.tmdbId === "number" && s.tmdbId === candidateTmdbId)
+                    : ranked.some(
+                      (s: any) =>
+                        String(s?.title ?? "").trim().toLowerCase() === clean.toLowerCase()
+                    );
 
                 if (alreadyRanked) {
                   setError("That show is already ranked.");
@@ -600,6 +643,10 @@ export default function LogExperience() {
                   overview: details.overview ?? "",
                   genres: details.genres ?? [],
                 };
+
+                if (typeof candidateTmdbId === "number" && Number.isFinite(candidateTmdbId)) {
+                  setPendingTmdbId(candidateTmdbId);
+                }
 
                 // Start ranking immediately using the fetched metadata (no async state dependency)
                 if (ranked.length === 0) {
@@ -633,7 +680,7 @@ export default function LogExperience() {
       if (prefillTitle) {
         setTitle(prefillTitle);
         if (auto) {
-          void startWithTitle(prefillTitle.trim());
+          setError("Pick the exact show from the search results so we can attach the right TMDB id.");
         }
       }
     }
@@ -662,6 +709,7 @@ export default function LogExperience() {
               setTitle(e.target.value);
               setSelectedTmdbId(null);
               setSelectedMeta(null);
+              setPendingTmdbId(null);
               if (error) setError(null);
             }}
             placeholder="e.g., The Boys"
@@ -775,11 +823,29 @@ export default function LogExperience() {
                   variant="outline"
                   onClick={() => handleAnswer("new")}
                   disabled={isWorking}
-                  className="h-auto w-full justify-start px-5 py-7 text-left"
+                  className="h-auto w-full justify-start px-5 py-6 text-left"
                   aria-label={`Choose ${title.trim()}`}
                 >
-                  <div className="mt-2 text-2xl font-semibold text-white break-words">
-                    {title.trim()}
+                  <div className="flex items-center gap-4 w-full">
+                    {newShowPoster ? (
+                      <img
+                        src={newShowPoster}
+                        alt=""
+                        className="h-20 w-14 rounded-lg object-cover bg-white/10 shrink-0"
+                      />
+                    ) : (
+                      <div className="h-20 w-14 rounded-lg bg-white/10 shrink-0" />
+                    )}
+
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs text-white/50">New show</div>
+                      <div className="mt-1 text-xl font-semibold text-white break-words">
+                        {title.trim()}
+                      </div>
+                      {selectedMeta?.year ? (
+                        <div className="mt-1 text-xs text-white/50">{selectedMeta.year}</div>
+                      ) : null}
+                    </div>
                   </div>
                 </Button>
 
@@ -787,11 +853,29 @@ export default function LogExperience() {
                   variant="outline"
                   onClick={() => handleAnswer("existing")}
                   disabled={isWorking}
-                  className="h-auto w-full justify-start px-5 py-7 text-left"
+                  className="h-auto w-full justify-start px-5 py-6 text-left"
                   aria-label={`Choose ${comparisonShow?.title ?? "existing show"}`}
                 >
-                  <div className="mt-2 text-2xl font-semibold text-white break-words">
-                    {comparisonShow?.title}
+                  <div className="flex items-center gap-4 w-full">
+                    {existingShowPoster ? (
+                      <img
+                        src={existingShowPoster}
+                        alt=""
+                        className="h-20 w-14 rounded-lg object-cover bg-white/10 shrink-0"
+                      />
+                    ) : (
+                      <div className="h-20 w-14 rounded-lg bg-white/10 shrink-0" />
+                    )}
+
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs text-white/50">Already ranked</div>
+                      <div className="mt-1 text-xl font-semibold text-white break-words">
+                        {comparisonShow?.title}
+                      </div>
+                      {(comparisonShow as any)?.year ? (
+                        <div className="mt-1 text-xs text-white/50">{(comparisonShow as any).year}</div>
+                      ) : null}
+                    </div>
                   </div>
                 </Button>
               </div>

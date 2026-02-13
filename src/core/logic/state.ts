@@ -12,26 +12,19 @@ export type MetaOpts = {
 };
 
 /**
- * A temporary in-memory session while we place a NEW show.
- * We DO NOT store this in localStorage in v1 (it's just UI flow state).
+ * Check if a show already exists in the current state.
+ *
+ * IMPORTANT:
+ * - Prefer TMDB id when available (prevents collisions like two different shows with the same title).
+ * - Fall back to case-insensitive title matching when tmdbId is missing.
  */
-export type CompareSession = {
-  // The show we are trying to place into the ranked order
-  newShow: Show;
+function showExists(state: AppState, title: string, tmdbId?: number | null): boolean {
+  const id = typeof tmdbId === "number" && Number.isFinite(tmdbId) ? tmdbId : null;
 
-  // Search bounds for insertion (like binary search)
-  low: number; // inclusive
-  high: number; // exclusive
+  if (id !== null) {
+    return state.shows.some((s) => typeof (s as any).tmdbId === "number" && (s as any).tmdbId === id);
+  }
 
-  // Which index the app is currently asking the user to compare against
-  compareIndex: number;
-};
-
-/**
- * Check if a title already exists in the current state (case-insensitive).
- * This prevents duplicate entries like "The Boys" and "the boys".
- */
-function titleExists(state: AppState, title: string): boolean {
   const normalized = title.trim().toLowerCase();
   if (!normalized) return false;
 
@@ -93,8 +86,8 @@ export function setState(state: AppState): void {
 export function addFirstShow(title: string, opts?: MetaOpts): AppState {
   const state = getState();
 
-  // Guard: don't allow duplicates (case-insensitive)
-  if (titleExists(state, title)) return state;
+  // Guard: don't allow duplicates (tmdbId-first, title fallback)
+  if (showExists(state, title, opts?.tmdbId)) return state;
 
   // If a show already exists, we don't allow a "first show" add.
   // The UI should send the user into the comparison flow instead.
@@ -136,8 +129,8 @@ export function addShowByComparison(
 ): AppState {
   const state = getState();
 
-  // Guard: don't allow duplicates (case-insensitive)
-  if (titleExists(state, title)) return state;
+  // Guard: don't allow duplicates (tmdbId-first, title fallback)
+  if (showExists(state, title, opts?.tmdbId)) return state;
 
   const newShow = createShow(title, opts);
 
@@ -170,8 +163,8 @@ export function getRankedShows(state: AppState): RankedShow[] {
 export function startComparisonSession(title: string, opts?: MetaOpts): CompareSession | null {
   const state = getState();
 
-  // Guard: don't allow duplicates (case-insensitive)
-  if (titleExists(state, title)) return null;
+  // Guard: don't allow duplicates (tmdbId-first, title fallback)
+  if (showExists(state, title, opts?.tmdbId)) return null;
 
   // If there are no shows, we don't need comparisons.
   // The UI should call addFirstShow() instead.
