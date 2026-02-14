@@ -250,8 +250,8 @@ export default function ProfileClient() {
                 typeof r.derived_rating === "number"
                   ? r.derived_rating
                   : r.derived_rating != null
-                  ? Number(r.derived_rating)
-                  : null,
+                    ? Number(r.derived_rating)
+                    : null,
               createdAt: String(r.created_at),
             }));
             setMyEvents(rows);
@@ -420,104 +420,100 @@ export default function ProfileClient() {
 
   return (
     <div className="space-y-6">
-      {/* Header card (Beli-ish) */}
-      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-6">
-        <div className="flex items-start justify-between gap-4">
+      {/* Header (mobile-first) */}
+      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-5 sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-center gap-4">
             {/* Avatar (placeholder for now) */}
-            <div className="h-16 w-16 rounded-full bg-white/10 border border-white/15 flex items-center justify-center">
-              <span className="text-lg font-semibold text-white/70">
+            <div className="h-14 w-14 sm:h-16 sm:w-16 rounded-full bg-white/10 border border-white/15 flex items-center justify-center shrink-0">
+              <span className="text-base sm:text-lg font-semibold text-white/70">
                 {(username ?? "?").slice(0, 1).toUpperCase()}
               </span>
             </div>
 
             <div className="min-w-0">
-              <div className="text-lg font-semibold truncate">
-                @{username ?? "guest"}
-              </div>
-              <div className="mt-1 text-xs text-white/50">
-                {memberSince ? `Member since ${memberSince}` : ""}
+              <div className="text-base sm:text-lg font-semibold truncate">@{username ?? "guest"}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/50">
+                {memberSince ? <span>Member since {memberSince}</span> : null}
+                {memberSince ? <span className="text-white/20">•</span> : null}
               </div>
             </div>
           </div>
 
-          {/* Right-side actions (keep minimal) */}
-          <div className="flex items-center gap-2">
+          {/* Actions (stack on mobile) */}
+          <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center sm:justify-end">
             <button
               type="button"
               onClick={() => {
                 // Future sprint: open edit modal
               }}
-              className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm font-medium text-white/80 hover:bg-white/10"
+              className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-xs sm:text-sm font-medium text-white/80 hover:bg-white/10"
               title="Profile editing comes later"
             >
-              Edit profile
+              Edit
             </button>
             <button
               type="button"
               onClick={handleShareProfile}
-              className="rounded-xl bg-white text-black px-3 py-2 text-sm font-semibold hover:opacity-90"
+              className="rounded-xl bg-white text-black px-3 py-2 text-xs sm:text-sm font-semibold hover:opacity-90"
             >
               Share
             </button>
             <button
               type="button"
               onClick={handleSignOut}
-              className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm font-medium text-white/80 hover:bg-white/10"
+              className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-xs sm:text-sm font-medium text-white/80 hover:bg-white/10"
             >
               Sign out
             </button>
           </div>
         </div>
 
-        {copyMsg ? (
-          <div className="mt-3 text-xs text-white/60">{copyMsg}</div>
-        ) : null}
+        {copyMsg ? <div className="mt-3 text-xs text-white/60">{copyMsg}</div> : null}
 
-        {/* Stats row */}
-        <div className="mt-5 grid grid-cols-3 gap-3">
-          <Link
-            href="/friends"
-            className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center hover:bg-white/[0.06] transition"
-          >
-            <div className="text-2xl font-semibold">{hydrated ? friendsCount : "—"}</div>
-            <div className="mt-1 text-xs text-white/50">Friends</div>
-          </Link>
 
-          <Link
-            href="/my-list"
-            className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center hover:bg-white/[0.06] transition"
-          >
-            <div className="text-2xl font-semibold">{hydrated ? rankedCount : "—"}</div>
-            <div className="mt-1 text-xs text-white/50">Ranked</div>
-          </Link>
+        {/* Stats bar (seamless) */}
+        <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <Link
+              href="/friends"
+              className="flex-1 text-center hover:opacity-90"
+            >
+              <div className="text-lg sm:text-xl font-semibold leading-none">
+                {hydrated ? friendsCount : "—"}
+              </div>
+              <div className="mt-1 text-[11px] sm:text-xs text-white/50">Friends</div>
+            </Link>
 
-          <Link
-            href="/my-list?tab=watch"
-            className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center hover:bg-white/[0.06] transition"
-          >
-            <div className="text-2xl font-semibold">{hydrated ? wantToWatchCount : "—"}</div>
-            <div className="mt-1 text-xs text-white/50">Want to watch</div>
-          </Link>
-        </div>
+            <div className="h-8 w-px bg-white/10" aria-hidden="true" />
 
-        {/* Quick buttons row (minimal placeholders) */}
-        <div className="mt-4 flex flex-wrap gap-2">
-          {topShow ? (
-            <div className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-xs text-white/70">
-              Top: <span className="font-semibold text-white">{topShow.title}</span>
-            </div>
-          ) : null}
-          {newestShow ? (
-            <div className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-xs text-white/70">
-              Newest: <span className="font-semibold text-white">{newestShow.title}</span>
-            </div>
-          ) : null}
+            <Link
+              href="/my-list"
+              className="flex-1 text-center hover:opacity-90"
+            >
+              <div className="text-lg sm:text-xl font-semibold leading-none">
+                {hydrated ? rankedCount : "—"}
+              </div>
+              <div className="mt-1 text-[11px] sm:text-xs text-white/50">Ranked</div>
+            </Link>
+
+            <div className="h-8 w-px bg-white/10" aria-hidden="true" />
+
+            <Link
+              href="/my-list?tab=watch"
+              className="flex-1 text-center hover:opacity-90"
+            >
+              <div className="text-lg sm:text-xl font-semibold leading-none">
+                {hydrated ? wantToWatchCount : "—"}
+              </div>
+              <div className="mt-1 text-[11px] sm:text-xs text-white/50">Want</div>
+            </Link>
+          </div>
         </div>
       </section>
 
-      {/* Insights grid (keep your existing stats, just styled cleaner) */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* Insights */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
           <div className="text-white/70 text-sm">Days since first log</div>
           <div className="mt-1 text-3xl font-semibold">
@@ -530,18 +526,16 @@ export default function ProfileClient() {
 
           <div className="mt-2 flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-lg font-semibold truncate">
-                {!hydrated ? "—" : topShow ? topShow.title : "—"}
-              </div>
+              <div className="text-lg font-semibold truncate">{!hydrated ? "—" : topShow ? topShow.title : "—"}</div>
               <div className="mt-1 text-xs text-white/50">Highest-rated right now</div>
             </div>
 
             {topShow ? (
               <div className="shrink-0">
                 <div className="h-10 w-10 rounded-full border border-white/15 bg-white/5 flex items-center justify-center">
-                  <span className={`text-sm font-semibold ${ratingTextClass(topShow.rating)}`}>
-                    {Number.isFinite(topShow.rating) ? topShow.rating.toFixed(1) : "—"}
-                  </span>
+                  <span className={`text-sm font-semibold ${ratingTextClass(topShow.rating)}`}>{
+                    Number.isFinite(topShow.rating) ? topShow.rating.toFixed(1) : "—"
+                  }</span>
                 </div>
               </div>
             ) : null}
@@ -553,18 +547,16 @@ export default function ProfileClient() {
 
           <div className="mt-2 flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-lg font-semibold truncate">
-                {!hydrated ? "—" : bottomShow ? bottomShow.title : "—"}
-              </div>
+              <div className="text-lg font-semibold truncate">{!hydrated ? "—" : bottomShow ? bottomShow.title : "—"}</div>
               <div className="mt-1 text-xs text-white/50">Lowest-rated right now</div>
             </div>
 
             {bottomShow ? (
               <div className="shrink-0">
                 <div className="h-10 w-10 rounded-full border border-white/15 bg-white/5 flex items-center justify-center">
-                  <span className={`text-sm font-semibold ${ratingTextClass(bottomShow.rating)}`}>
-                    {Number.isFinite(bottomShow.rating) ? bottomShow.rating.toFixed(1) : "—"}
-                  </span>
+                  <span className={`text-sm font-semibold ${ratingTextClass(bottomShow.rating)}`}>{
+                    Number.isFinite(bottomShow.rating) ? bottomShow.rating.toFixed(1) : "—"
+                  }</span>
                 </div>
               </div>
             ) : null}
@@ -573,8 +565,8 @@ export default function ProfileClient() {
       </section>
 
       {/* Top genres */}
-      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-6">
-        <div className="flex items-center justify-between">
+      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-5 sm:p-6">
+        <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-white/90">Top genres</h2>
           <div className="text-xs text-white/40">Based on ranked shows</div>
         </div>
@@ -596,8 +588,8 @@ export default function ProfileClient() {
       </section>
 
       {/* My activity */}
-      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-6">
-        <div className="flex items-center justify-between">
+      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-5 sm:p-6">
+        <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-white/90">My activity</h2>
           <div className="text-xs text-white/40">Latest ranks</div>
         </div>
@@ -612,14 +604,8 @@ export default function ProfileClient() {
           <div className="mt-4 space-y-2">
             {myEvents.map((e) => {
               const current = ratingByTmdbId.get(e.tmdbId);
-              const effectiveRating = typeof current === "number" && Number.isFinite(current)
-                ? current
-                : e.derivedRating;
-
-              const ratingText = effectiveRating === null || effectiveRating === undefined
-                ? "—"
-                : effectiveRating.toFixed(1);
-
+              const effectiveRating = typeof current === "number" && Number.isFinite(current) ? current : e.derivedRating;
+              const ratingText = effectiveRating === null || effectiveRating === undefined ? "—" : effectiveRating.toFixed(1);
               const dateLabel = formatShortDate(Date.parse(e.createdAt));
 
               return (
@@ -646,13 +632,11 @@ export default function ProfileClient() {
       </section>
 
       {/* Danger zone */}
-      <section className="rounded-2xl border border-red-500/25 bg-red-500/[0.05] p-6">
-        <div className="flex items-start justify-between gap-4">
+      <section className="rounded-2xl border border-red-500/25 bg-red-500/[0.05] p-5 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
             <h2 className="text-sm font-semibold text-red-200">Danger zone</h2>
-            <p className="mt-1 text-sm text-white/60">
-              Delete your account and all your data (ranked shows, want to watch, friendships, activity).
-            </p>
+            <p className="mt-1 text-sm text-white/60">Delete your account and all your data (ranked shows, want to watch, friendships, activity).</p>
           </div>
 
           <button
@@ -711,9 +695,7 @@ export default function ProfileClient() {
               </div>
             </div>
 
-            {deleteError ? (
-              <div className="mt-3 text-sm text-red-200">{deleteError}</div>
-            ) : null}
+            {deleteError ? <div className="mt-3 text-sm text-red-200">{deleteError}</div> : null}
           </div>
         ) : null}
       </section>

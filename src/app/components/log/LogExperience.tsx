@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Preference } from "@/core/logic/ranking";
 import {
@@ -29,27 +29,20 @@ const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
 
 const MAX_SKIPS_BEFORE_AUTOPLACE = 5;
 
-const ACTIVITY_EVENT_DEDUPE_PREFIX = "bingebuddy:dedupe:rank_completed:";
 const ACTIVITY_EVENT_DEDUPE_WINDOW_MS = 15_000; // 15s
 
+// In-memory (no localStorage). Prevents double-emits from strict-mode double invokes / fast rerenders.
+const rankCompletedDedupe = new Map<string, number>();
+
 function shouldEmitRankCompletedEvent(userId: string, tmdbId: number): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    const key = `${ACTIVITY_EVENT_DEDUPE_PREFIX}${userId}:${tmdbId}`;
-    const lastRaw = localStorage.getItem(key);
-    const last = lastRaw ? Number(lastRaw) : 0;
+  const key = `${userId}:${tmdbId}`;
+  const last = rankCompletedDedupe.get(key) ?? 0;
+  const now = Date.now();
 
-    const now = Date.now();
-    if (Number.isFinite(last) && now - last < ACTIVITY_EVENT_DEDUPE_WINDOW_MS) {
-      return false;
-    }
+  if (now - last < ACTIVITY_EVENT_DEDUPE_WINDOW_MS) return false;
 
-    localStorage.setItem(key, String(now));
-    return true;
-  } catch {
-    // If localStorage is blocked, fall back to emitting.
-    return true;
-  }
+  rankCompletedDedupe.set(key, now);
+  return true;
 }
 
 function notifyStateChanged() {
@@ -84,6 +77,7 @@ type UndoEntry = {
 export default function LogExperience() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
 
   const [title, setTitle] = useState("");
   type TmdbSearchItem = {
@@ -199,6 +193,65 @@ export default function LogExperience() {
     const p = (comparisonShow as any)?.posterPath ?? null;
     return typeof p === "string" && p ? `${TMDB_IMG_BASE}/w185${p}` : null;
   }, [comparisonShow]);
+
+  const placementHint = useMemo(() => {
+    if (!session) return null;
+    const size = Math.max(0, session.high - session.low);
+    // Not exact, but helpful: binary search-like placement typically takes ~log2(window)
+    const estRemaining = size <= 1 ? 0 : Math.ceil(Math.log2(size));
+    return { size, estRemaining };
+  }, [session]);
+  // Keyboard shortcuts for compare flow
+  useEffect(() => {
+    if (!session) return;
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (!session) return;
+      if (isWorking) return;
+
+      // Avoid hijacking typing if focus is in the input
+      const active = document.activeElement;
+      const isTyping = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || (active as HTMLElement).isContentEditable);
+
+      // During compare we generally want shortcuts, but allow typing if user clicked back into input.
+      if (isTyping) return;
+
+      const k = e.key;
+      if (k === "ArrowLeft") {
+        e.preventDefault();
+        handleAnswer("new");
+        return;
+      }
+      if (k === "ArrowRight") {
+        e.preventDefault();
+        handleAnswer("existing");
+        return;
+      }
+      if (k === "u" || k === "U") {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+      if (k === "s" || k === "S") {
+        e.preventDefault();
+        handleSkip();
+        return;
+      }
+      if (k === "Escape") {
+        // Soft-cancel compare UI (does not change ranking logic)
+        e.preventDefault();
+        setSession(null);
+        setUndoStack([]);
+        setSkippedCompareIndexes([]);
+        // put focus back to input so user can change selection
+        setTimeout(() => titleInputRef.current?.focus(), 0);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, isWorking]);
 
   function goToSavedScreen(savedTitle: string) {
     const nextRanked = getRankedShows(getState());
@@ -463,6 +516,7 @@ export default function LogExperience() {
       setUndoStack([]);
       setSkippedCompareIndexes([]);
       setTitle("");
+      setTimeout(() => titleInputRef.current?.focus(), 0);
       goToSavedScreen(savedTitle);
       setIsWorking(false);
     } else {
@@ -516,6 +570,7 @@ export default function LogExperience() {
         setUndoStack([]);
         setSkippedCompareIndexes([]);
         setTitle("");
+        setTimeout(() => titleInputRef.current?.focus(), 0);
         goToSavedScreen(savedTitle);
         setIsWorking(false);
         return;
@@ -575,6 +630,7 @@ export default function LogExperience() {
       setUndoStack([]);
       setSkippedCompareIndexes([]);
       setTitle("");
+      setTimeout(() => titleInputRef.current?.focus(), 0);
       goToSavedScreen(savedTitle);
       setIsWorking(false);
     } else {
@@ -693,8 +749,8 @@ export default function LogExperience() {
   const isComparing = session !== null;
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-2xl border border-white/15 bg-white/[0.03] p-6 space-y-5">
+    <div className="mx-auto w-full max-w-2xl space-y-6">
+      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-5 shadow-sm">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Log</h2>
           <p className="text-sm text-white/60">
@@ -704,6 +760,7 @@ export default function LogExperience() {
         <label className="block text-sm text-white/60">
           <span className="font-medium text-white/80">Show title</span>
           <Input
+            ref={titleInputRef}
             value={title}
             onChange={(e) => {
               setTitle(e.target.value);
@@ -717,7 +774,7 @@ export default function LogExperience() {
           />
         </label>
         {searchResults.length > 0 ? (
-          <div className="rounded-xl border border-white/15 bg-black/80 backdrop-blur max-h-72 overflow-auto">
+          <div className="rounded-xl border border-white/10 bg-black/70 backdrop-blur max-h-72 overflow-auto">
             {searchResults.map((r) => (
               <button
                 key={r.tmdbId}
@@ -790,9 +847,16 @@ export default function LogExperience() {
         ) : (
           <>
             <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm text-white/70">
-                  {isWorking ? "Placing…" : "Which did you like more?"}
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-sm text-white/70">
+                    {isWorking ? "Placing…" : "Which did you like more?"}
+                  </div>
+                  {placementHint ? (
+                    <div className="text-xs text-white/45">
+                      {placementHint.estRemaining > 0 ? <> • est. {placementHint.estRemaining} more</> : null}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -816,14 +880,19 @@ export default function LogExperience() {
               </div>
 
               <div className={
-                "grid grid-cols-1 sm:grid-cols-2 gap-3 transition-opacity " +
+                "relative grid grid-cols-1 sm:grid-cols-2 gap-3 transition-opacity " +
                 (isWorking ? "opacity-60 pointer-events-none" : "")
               }>
+                <div className="hidden sm:flex absolute inset-y-0 left-1/2 -translate-x-1/2 items-center pointer-events-none">
+                  <div className="rounded-full border border-white/10 bg-black/50 px-3 py-1 text-[10px] tracking-wider text-white/60">
+                    VS
+                  </div>
+                </div>
                 <Button
                   variant="outline"
                   onClick={() => handleAnswer("new")}
                   disabled={isWorking}
-                  className="h-auto w-full justify-start px-5 py-6 text-left"
+                  className="h-auto w-full justify-start rounded-2xl px-5 py-5 text-left border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
                   aria-label={`Choose ${title.trim()}`}
                 >
                   <div className="flex items-center gap-4 w-full">
@@ -853,7 +922,7 @@ export default function LogExperience() {
                   variant="outline"
                   onClick={() => handleAnswer("existing")}
                   disabled={isWorking}
-                  className="h-auto w-full justify-start px-5 py-6 text-left"
+                  className="h-auto w-full justify-start rounded-2xl px-5 py-5 text-left border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
                   aria-label={`Choose ${comparisonShow?.title ?? "existing show"}`}
                 >
                   <div className="flex items-center gap-4 w-full">
@@ -882,7 +951,7 @@ export default function LogExperience() {
             </div>
 
             <p className="text-sm text-white/60">
-              We’ll ask a few quick comparisons to place it correctly. Use Undo or Skip if you’re unsure.
+              We’ll ask a few quick comparisons to place it correctly.
             </p>
           </>
         )}
