@@ -601,3 +601,29 @@ export async function loadFriendsFeed(
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
 }
+
+/**
+ * Delete the signed-in user's own activity events for a given tmdbId.
+ * This is used when a user removes/unranks a show and wants the feed cleaned up.
+ * Requires RLS policy that allows: delete where actor_user_id = auth.uid().
+ */
+export async function deleteOwnActivityEventsForTmdbId(
+  actorUserId: string,
+  tmdbId: number
+): Promise<BackendResult<true>> {
+  try {
+    if (!actorUserId) return { ok: false, error: "Missing user." };
+    if (!Number.isFinite(tmdbId)) return { ok: false, error: "Invalid tmdbId." };
+
+    const res = await supabase
+      .from("activity_events")
+      .delete()
+      .eq("actor_user_id", actorUserId)
+      .eq("tmdb_id", tmdbId);
+
+    if (res.error) return { ok: false, error: res.error.message };
+    return { ok: true, data: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}

@@ -33,6 +33,10 @@ function ratingTextClass(rating: number): string {
   return "text-red-300";
 }
 
+function filterOutSelf(rows: any[], userId: string): any[] {
+  return (rows ?? []).filter((r) => String((r as any)?.actorUserId ?? "") !== String(userId));
+}
+
 export default function FeedClient() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -147,11 +151,14 @@ export default function FeedClient() {
     }
 
     const rows = feedRes.data ?? [];
-    setEvents(rows);
+    const filtered = filterOutSelf(rows, user.id);
+
+    setEvents(filtered);
+    // hasMore should be based on what we fetched from the backend (pre-filter)
     setHasMore(rows.length === PAGE_SIZE);
 
-    await loadActorUsernames(rows);
-    await loadCurrentRatings(rows);
+    await loadActorUsernames(filtered);
+    await loadCurrentRatings(filtered);
 
     setLoading(false);
   }
@@ -188,12 +195,15 @@ export default function FeedClient() {
     }
 
     const rows = feedRes.data ?? [];
-    setEvents(rows);
+    const filtered = filterOutSelf(rows, user.id);
+
+    setEvents(filtered);
     setPage(nextPage);
+    // hasMore should be based on what we fetched from the backend (pre-filter)
     setHasMore(rows.length === targetCount);
 
-    await loadActorUsernames(rows);
-    await loadCurrentRatings(rows);
+    await loadActorUsernames(filtered);
+    await loadCurrentRatings(filtered);
 
     setLoadingMore(false);
   }
@@ -214,7 +224,7 @@ export default function FeedClient() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm text-white/60">
-          {loading ? "Loading…" : hasItems ? "Latest activity" : "No activity yet."}
+          {loading ? "Loading…" : hasItems ? "Friends activity" : "No activity yet."}
         </div>
 
         <button

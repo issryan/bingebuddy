@@ -2,14 +2,23 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getRankedShows, getState, reorderShows } from "@/core/logic/state";
-import RankedDragList from "./RankedDragList";
+import { getRankedShows, getState, reorderShows, removeShowById, removeShowByTmdbId } from "@/core/logic/state";
 import type { WantToWatchItem } from "@/core/storage/wantToWatchStorage";
-import { loadFromBackend, saveToBackend } from "@/core/storage/backendSync";
+import { deleteOwnActivityEventsForTmdbId, loadFromBackend, saveToBackend } from "@/core/storage/backendSync";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
 
@@ -37,7 +46,7 @@ export default function MyListClient() {
 
   const [ranked, setRanked] = useState(() => getRankedShows(getState()));
   const [wantToWatch, setWantToWatch] = useState<WantToWatchItem[]>([]);
-  const [isReorderMode, setIsReorderMode] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
   const PAGE_SIZE = 20;
   const [rankedVisible, setRankedVisible] = useState(PAGE_SIZE);
   const [wtwVisible, setWtwVisible] = useState(PAGE_SIZE);
@@ -56,6 +65,10 @@ export default function MyListClient() {
   const [recs, setRecs] = useState<RecItem[]>([]);
   const [recsLoading, setRecsLoading] = useState(false);
   const [recsError, setRecsError] = useState<string | null>(null);
+
+  const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<{ tmdbId: number | null; id: string; title: string } | null>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
 
   const canShowRecs = useMemo(() => ranked.length >= 3, [ranked.length]);
   const rankedSlice = useMemo(() => ranked.slice(0, rankedVisible), [ranked, rankedVisible]);
@@ -102,23 +115,29 @@ export default function MyListClient() {
   }
 
   async function saveSnapshotToCloud(): Promise<void> {
-    try {
-      const sessionRes = await supabase.auth.getSession();
-      const user = sessionRes.data.session?.user ?? null;
-      if (!user) return;
-
-      const state = getState();
-      const wtw = (wantToWatch ?? []).map((item) => ({
-        ...item,
-        overview: item.overview ?? "",
-      }));
-      await saveToBackend(user.id, state, wtw as any);
-
-      // Immediately re-hydrate so this page reflects what Supabase accepted.
-      await hydrateFromBackend();
-    } catch {
-      // silent — local-first UX
+    const sessionRes = await supabase.auth.getSession();
+    const user = sessionRes.data.session?.user ?? null;
+    if (!user) {
+      console.error("saveSnapshotToCloud: no authenticated user");
+      return;
     }
+
+    const state = getState();
+    const wtw = (wantToWatch ?? []).map((item) => ({
+      ...item,
+      overview: item.overview ?? "",
+    }));
+
+    const result = await saveToBackend(user.id, state, wtw as any);
+
+    if (!result.ok) {
+      console.error("saveSnapshotToCloud failed:", result.error);
+      alert("Failed to sync changes to the server. Please try again.");
+      return;
+    }
+
+    // Re-hydrate immediately from Supabase (source of truth)
+    await hydrateFromBackend();
   }
 
   async function loadRecs(): Promise<void> {
@@ -210,7 +229,9 @@ export default function MyListClient() {
   useEffect(() => {
     const next = getTabFromQuery();
     setActiveTab(next);
-    if (next !== "ranked") setIsReorderMode(false);
+    if (next !== "ranked") {
+      setIsEditMode(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -259,13 +280,120 @@ export default function MyListClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, canShowRecs]);
 
+  // Remove a ranked show (persisted delete, not just UI)
+  async function removeRankedShow(args: { tmdbId: number | null; id: string; title: string }) {
+    // Open in-app confirm dialog instead of browser popup
+    setPendingRemove(args);
+    setRemoveDialogOpen(true);
+    return;
+  }
+
+  async function confirmRemoveRankedShow() {
+    if (!pendingRemove) return;
+
+    const args = pendingRemove;
+
+    try {
+      setIsRemoving(true);
+
+      const sessionRes = await supabase.auth.getSession();
+      const user = sessionRes.data.session?.user ?? null;
+      if (!user) {
+        alert("You need to be signed in to edit your list.");
+        return;
+      }
+
+      const hasTmdb = typeof args.tmdbId === "number" && Number.isFinite(args.tmdbId);
+
+      if (hasTmdb) {
+        // 1) Delete the ranked row in Supabase
+        const delRanked = await supabase
+          .from("ranked_shows")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("tmdb_id", args.tmdbId as number);
+
+        if (delRanked.error) {
+          console.error("Failed to delete ranked_shows row:", delRanked.error);
+          alert(`Couldn't remove show (server): ${delRanked.error.message}`);
+          return;
+        }
+
+        // 2) Best-effort: delete *your own* activity events for this show
+        try {
+          await deleteOwnActivityEventsForTmdbId(user.id, args.tmdbId as number);
+        } catch {
+          // ignore (best-effort)
+        }
+      }
+
+      // 3) Update local in-memory ranking state so UI updates immediately
+      if (hasTmdb) {
+        removeShowByTmdbId(args.tmdbId as number);
+      } else {
+        removeShowById(String(args.id));
+      }
+
+      setRanked(getRankedShows(getState()));
+      setRankedVisible(PAGE_SIZE);
+      setIsEditMode(false);
+
+      // 4) Persist the new snapshot to Supabase for consistency
+      await saveSnapshotToCloud();
+
+      // 5) Tell any listeners to refresh
+      window.dispatchEvent(new Event("bingebuddy:state-changed"));
+    } catch (e) {
+      console.error("confirmRemoveRankedShow failed:", e);
+      alert("Something went wrong while removing the show. Please try again.");
+    } finally {
+      setIsRemoving(false);
+      setRemoveDialogOpen(false);
+      setPendingRemove(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
+      <AlertDialog open={removeDialogOpen} onOpenChange={setRemoveDialogOpen}>
+        <AlertDialogContent className="border-white/15 bg-neutral-950 text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove from ranked?</AlertDialogTitle>
+            <AlertDialogDescription className="text-white/60">
+              {pendingRemove
+                ? `This will remove “${pendingRemove.title}” from your ranked list and also remove your activity posts for it.`
+                : "This will remove the show from your ranked list."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="bg-white/5 border border-white/10 text-white hover:bg-white/10"
+              disabled={isRemoving}
+              onClick={() => {
+                setRemoveDialogOpen(false);
+                setPendingRemove(null);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-white text-black hover:bg-white/90"
+              disabled={isRemoving}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmRemoveRankedShow();
+              }}
+            >
+              {isRemoving ? "Removing…" : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <Tabs
         value={activeTab}
         onValueChange={(v) => {
           const next = (v as TabKey) ?? "ranked";
-          setIsReorderMode(false);
+          setIsEditMode(false);
           setActiveTab(next);
 
           if (next === "ranked") router.replace("/my-list");
@@ -285,96 +413,180 @@ export default function MyListClient() {
           <Card id="tab-ranked" className="border-white/15 bg-white/[0.03]">
             <CardHeader className="flex flex-row items-center justify-between gap-3">
               <CardTitle className="text-lg">Ranked</CardTitle>
-              {ranked.length > 1 ? (
-                <Button type="button" variant={isReorderMode ? "default" : "secondary"} onClick={() => setIsReorderMode((v) => !v)}>
-                  {isReorderMode ? "Done" : "Reorder"}
-                </Button>
-              ) : null}
+              <div className="flex items-center gap-2">
+                {ranked.length > 0 ? (
+                  <Button
+                    type="button"
+                    variant={isEditMode ? "default" : "secondary"}
+                    onClick={() => setIsEditMode((v) => !v)}
+                  >
+                    {isEditMode ? "Done" : "Edit"}
+                  </Button>
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent>
             {ranked.length === 0 ? (
               <p className="mt-3 text-white/60">No ranked shows yet.</p>
-            ) : isReorderMode ? (
-              <>
-                <div className="mt-3 text-sm text-white/60">Drag shows to reorder.</div>
-                <RankedDragList
-                  ranked={ranked}
-                  onCommitReorder={(from, to) => {
-                    reorderShows(from, to);
-                    setRanked(getRankedShows(getState()));
-                    void saveSnapshotToCloud();
-                  }}
-                />
-              </>
             ) : (
               <>
-              <ol className="mt-4 space-y-2">
-                {rankedSlice.map((s) => {
-                  const img = posterUrl(s.posterPath, "w92");
-                  const metaLine = [s.year ? s.year : "", genresLabel(s.genres)].filter(Boolean).join(" • ");
-                  const canOpen = typeof s.tmdbId === "number" && s.tmdbId > 0;
-                  const trueRank = ranked.findIndex((x) => x.id === s.id) + 1;
+                <ol className="mt-4 space-y-2">
+                  {rankedSlice.map((s) => {
+                    const img = posterUrl(s.posterPath, "w92");
+                    const metaLine = [s.year ? s.year : "", genresLabel(s.genres)].filter(Boolean).join(" • ");
+                    const canOpen = typeof s.tmdbId === "number" && s.tmdbId > 0;
+                    const trueRank = ranked.findIndex((x) => x.id === s.id) + 1;
 
-                  return (
-                    <li key={s.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!canOpen) return;
-                          router.push(`/show/${s.tmdbId}`);
-                        }}
-                        className={
-                          "w-full flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-left " +
-                          (canOpen ? "hover:bg-white/10 hover:border-white/20" : "cursor-default")
-                        }
-                        aria-label={canOpen ? `Open details for ${s.title}` : undefined}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          {/* Poster */}
-                          {img ? (
-                            <img
-                              src={img}
-                              alt=""
-                              className="w-10 h-14 rounded bg-white/10 object-cover shrink-0"
-                            />
-                          ) : (
-                            <div className="w-10 h-14 rounded bg-white/10 shrink-0" />
-                          )}
-
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-white/60 shrink-0">#{trueRank}</span>
-                              <span className="font-medium truncate">{s.title}</span>
-                            </div>
-
-                            {metaLine ? (
-                              <div className="mt-0.5 text-xs text-white/50 truncate">{metaLine}</div>
-                            ) : null}
-                          </div>
-                        </div>
-
-                        <div
+                    return (
+                      <li key={s.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isEditMode) return;
+                            if (!canOpen) return;
+                            router.push(`/show/${s.tmdbId}`);
+                          }}
                           className={
-                            "shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-full border bg-white/5 text-sm font-semibold " +
-                            ratingBadgeClass(s.rating)
+                            "w-full flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-left " +
+                            (canOpen ? "hover:bg-white/10 hover:border-white/20" : "cursor-default")
                           }
-                          aria-label={Number.isFinite(s.rating) ? `Rating ${Number(s.rating).toFixed(1)}` : "Rating unavailable"}
-                          title={Number.isFinite(s.rating) ? `Rating ${Number(s.rating).toFixed(1)}` : "Rating unavailable"}
+                          aria-label={canOpen ? `Open details for ${s.title}` : undefined}
                         >
-                          {Number.isFinite(s.rating) ? Number(s.rating).toFixed(1) : "—"}
-                        </div>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ol>
-              {ranked.length > rankedVisible ? (
-                <div className="mt-4 flex justify-center">
-                  <Button type="button" variant="secondary" onClick={() => setRankedVisible((v) => v + PAGE_SIZE)}>
-                    Load more
-                  </Button>
-                </div>
-              ) : null}
+                          <div className="flex items-center gap-3 min-w-0">
+                            {isEditMode ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void removeRankedShow({
+                                  tmdbId: typeof s.tmdbId === "number" ? s.tmdbId : null,
+                                  id: String(s.id),
+                                  title: String(s.title ?? ""),
+                                });
+                              }}
+                              className="h-10 w-10 p-0 text-white/70 hover:text-white hover:bg-white/10 shrink-0"
+                              aria-label={`Remove ${s.title} from ranked`}
+                              title="Remove"
+                            >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="18"
+                                  height="18"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M3 6h18" />
+                                  <path d="M8 6V4h8v2" />
+                                  <path d="M19 6l-1 14H6L5 6" />
+                                  <path d="M10 11v6" />
+                                  <path d="M14 11v6" />
+                                </svg>
+                              </Button>
+                            ) : null}
+                            {/* Poster */}
+                            {img ? (
+                              <img
+                                src={img}
+                                alt=""
+                                className="w-10 h-14 rounded bg-white/10 object-cover shrink-0"
+                              />
+                            ) : (
+                              <div className="w-10 h-14 rounded bg-white/10 shrink-0" />
+                            )}
+
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="text-white/60 shrink-0">#{trueRank}</span>
+                                <span className="font-medium truncate">{s.title}</span>
+                              </div>
+
+                              {metaLine ? (
+                                <div className="mt-0.5 text-xs text-white/50 truncate">{metaLine}</div>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <div className="shrink-0 flex items-center gap-2">
+                            {isEditMode ? (
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const from = ranked.findIndex((x) => x.id === s.id);
+                                    if (from <= 0) return;
+                                    reorderShows(from, from - 1);
+                                    setRanked(getRankedShows(getState()));
+                                    void saveSnapshotToCloud();
+                                  }}
+                                  disabled={ranked.findIndex((x) => x.id === s.id) <= 0}
+                                  className="h-10 w-10 p-0 text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-40"
+                                  aria-label={`Move ${s.title} up`}
+                                  title="Move up"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 19V5" />
+                                    <path d="m5 12 7-7 7 7" />
+                                  </svg>
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const from = ranked.findIndex((x) => x.id === s.id);
+                                    if (from === -1 || from >= ranked.length - 1) return;
+                                    reorderShows(from, from + 1);
+                                    setRanked(getRankedShows(getState()));
+                                    void saveSnapshotToCloud();
+                                  }}
+                                  disabled={(() => {
+                                    const from = ranked.findIndex((x) => x.id === s.id);
+                                    return from === -1 || from >= ranked.length - 1;
+                                  })()}
+                                  className="h-10 w-10 p-0 text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-40"
+                                  aria-label={`Move ${s.title} down`}
+                                  title="Move down"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 5v14" />
+                                    <path d="m19 12-7 7-7-7" />
+                                  </svg>
+                                </Button>
+                              </div>
+                            ) : null}
+                            <div
+                              className={
+                                "inline-flex items-center justify-center w-11 h-11 rounded-full border bg-white/5 text-sm font-semibold " +
+                                ratingBadgeClass(s.rating)
+                              }
+                              aria-label={Number.isFinite(s.rating) ? `Rating ${Number(s.rating).toFixed(1)}` : "Rating unavailable"}
+                              title={Number.isFinite(s.rating) ? `Rating ${Number(s.rating).toFixed(1)}` : "Rating unavailable"}
+                            >
+                              {Number.isFinite(s.rating) ? Number(s.rating).toFixed(1) : "—"}
+                            </div>
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+                {ranked.length > rankedVisible ? (
+                  <div className="mt-4 flex justify-center">
+                    <Button type="button" variant="secondary" onClick={() => setRankedVisible((v) => v + PAGE_SIZE)}>
+                      Load more
+                    </Button>
+                  </div>
+                ) : null}
               </>
             )}
             </CardContent>

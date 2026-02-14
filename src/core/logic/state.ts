@@ -31,6 +31,24 @@ function showExists(state: AppState, title: string, tmdbId?: number | null): boo
   return state.shows.some((s) => s.title.trim().toLowerCase() === normalized);
 }
 
+function matchesShow(s: any, opts: { id?: string; tmdbId?: number | null; title?: string }): boolean {
+  if (opts.id && String(s?.id) === String(opts.id)) return true;
+
+  const tmdbId = typeof opts.tmdbId === "number" && Number.isFinite(opts.tmdbId) ? opts.tmdbId : null;
+  if (tmdbId !== null) {
+    const sId = typeof s?.tmdbId === "number" && Number.isFinite(s.tmdbId) ? s.tmdbId : null;
+    if (sId !== null && sId === tmdbId) return true;
+  }
+
+  const t = (opts.title ?? "").trim().toLowerCase();
+  if (t) {
+    const st = String(s?.title ?? "").trim().toLowerCase();
+    if (st === t) return true;
+  }
+
+  return false;
+}
+
 /**
  * Create a brand-new Show object.
  * - Ranking truth is still the list order (NOT rating)
@@ -253,6 +271,43 @@ export function reorderShows(fromIndex: number, toIndex: number): AppState {
   next.splice(toIndex, 0, moved);
 
   const nextState: AppState = { shows: next };
+  setState(nextState);
+  return nextState;
+}
+
+/**
+ * Remove a ranked show from the stored list.
+ * IMPORTANT: prefer tmdbId to avoid same-title collisions.
+ */
+export function removeShowByTmdbId(tmdbId: number): AppState {
+  const state = getState();
+  if (!Number.isFinite(tmdbId)) return state;
+
+  const nextShows = state.shows.filter((s: any) => !matchesShow(s, { tmdbId }));
+  const nextState: AppState = { shows: nextShows };
+  setState(nextState);
+  return nextState;
+}
+
+export function removeShowById(id: string): AppState {
+  const state = getState();
+  const clean = String(id ?? "").trim();
+  if (!clean) return state;
+
+  const nextShows = state.shows.filter((s: any) => !matchesShow(s, { id: clean }));
+  const nextState: AppState = { shows: nextShows };
+  setState(nextState);
+  return nextState;
+}
+
+// Last-resort fallback (avoid using this when tmdbId exists)
+export function removeShowByTitle(title: string): AppState {
+  const state = getState();
+  const clean = String(title ?? "").trim();
+  if (!clean) return state;
+
+  const nextShows = state.shows.filter((s: any) => !matchesShow(s, { title: clean }));
+  const nextState: AppState = { shows: nextShows };
   setState(nextState);
   return nextState;
 }

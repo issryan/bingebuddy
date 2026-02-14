@@ -7,7 +7,7 @@ import FeedClient from "@/app/components/feed/FeedClient";
 import { supabase } from "@/lib/supabaseClient";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 
 type TvItem = {
   tmdbId: number;
@@ -46,13 +46,17 @@ function topGenresFromGenreArrays(genreArrays: unknown[], maxGenres: number): st
     .map(([g]) => g);
 }
 
-function CardSkeleton() {
+function CardSkeleton({ size }: { size: "sm" | "lg" }) {
+  const cardW = size === "lg" ? "w-[176px] sm:w-[204px]" : "w-[148px] sm:w-[168px]";
+  const contentH = size === "lg" ? "h-[84px]" : "h-[76px]";
+
   return (
-    <Card className="w-[140px] sm:w-[160px] shrink-0 overflow-hidden border-white/10 bg-white/[0.03]">
+    <Card className={`${cardW} shrink-0 overflow-hidden border-white/10 bg-white/[0.03]`}>
       <div className="aspect-[2/3] w-full bg-white/5 animate-pulse" />
-      <CardContent className="p-3 h-[78px] flex flex-col">
-        <div className="h-3 w-3/4 rounded bg-white/5 animate-pulse" />
-        <div className="mt-auto h-3 w-1/2 rounded bg-white/5 animate-pulse" />
+      <CardContent className={`p-3 ${contentH} flex flex-col`}>
+        <div className="h-3 w-4/5 rounded bg-white/5 animate-pulse" />
+        <div className="mt-2 h-3 w-3/5 rounded bg-white/5 animate-pulse" />
+        <div className="mt-auto h-3 w-1/3 rounded bg-white/5 animate-pulse" />
       </CardContent>
     </Card>
   );
@@ -65,6 +69,8 @@ function CarouselRow({
   loading,
   error,
   emptyMessage = "Rank more shows to unlock recommendations.",
+  tone = "default",
+  size = "sm",
 }: {
   title: string;
   subtitle?: string;
@@ -72,57 +78,64 @@ function CarouselRow({
   loading: boolean;
   error: string | null;
   emptyMessage?: string;
+  tone?: "default" | "primary";
+  size?: "sm" | "lg";
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
-  function scrollByCard(dir: -1 | 1) {
+  const cardW = size === "lg" ? "w-[176px] sm:w-[204px]" : "w-[148px] sm:w-[168px]";
+  const metaH = size === "lg" ? "h-[84px]" : "h-[76px]";
+
+  function scrollByCards(dir: -1 | 1) {
     const el = scrollerRef.current;
     if (!el) return;
 
-    // Scroll by ~3 cards (responsive)
-    const cardWidth = window.innerWidth < 640 ? 140 : 160;
-    const gap = 12; // gap-3
-    const delta = dir * (cardWidth + gap) * 3;
-    el.scrollBy({ left: delta, behavior: "smooth" });
+    // Scroll ~3 cards at a time.
+    const base = size === "lg" ? (window.innerWidth < 640 ? 176 : 204) : window.innerWidth < 640 ? 148 : 168;
+    const gap = 14; // ~gap-3.5
+    el.scrollBy({ left: dir * (base + gap) * 3, behavior: "smooth" });
   }
 
+  const headerTone =
+    tone === "primary"
+      ? "rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-white/[0.015]"
+      : "";
+
   return (
-    <Card className="border-white/10 bg-white/[0.02]">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="space-y-1">
-            <CardTitle className="text-base sm:text-lg">{title}</CardTitle>
-            {subtitle ? <p className="text-sm text-white/60">{subtitle}</p> : null}
-          </div>
-
-          <div className="hidden sm:flex items-center gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              className="h-9 px-3 bg-white/5 border border-white/10 text-white/80 hover:bg-white/10"
-              onClick={() => scrollByCard(-1)}
-              aria-label={`Scroll ${title} left`}
-            >
-              ←
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              className="h-9 px-3 bg-white/5 border border-white/10 text-white/80 hover:bg-white/10"
-              onClick={() => scrollByCard(1)}
-              aria-label={`Scroll ${title} right`}
-            >
-              →
-            </Button>
-          </div>
+    <section className={tone === "primary" ? `${headerTone} p-4 sm:p-5` : ""}>
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-base sm:text-lg font-semibold text-white truncate">{title}</div>
+          {subtitle ? <div className="mt-1 text-sm text-white/60 line-clamp-2">{subtitle}</div> : null}
         </div>
-      </CardHeader>
 
-      <CardContent className="pt-0">
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-9 w-9 rounded-xl bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 px-0"
+            onClick={() => scrollByCards(-1)}
+            aria-label={`Scroll ${title} left`}
+          >
+            ←
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-9 w-9 rounded-xl bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 px-0"
+            onClick={() => scrollByCards(1)}
+            aria-label={`Scroll ${title} right`}
+          >
+            →
+          </Button>
+        </div>
+      </div>
+
+      <div className={tone === "primary" ? "mt-4" : "mt-3"}>
         {loading ? (
-          <div className="flex gap-3 overflow-x-auto pb-2">
+          <div className="flex gap-3.5 overflow-x-auto pb-2">
             {Array.from({ length: 10 }).map((_, i) => (
-              <CardSkeleton key={i} />
+              <CardSkeleton key={i} size={size} />
             ))}
           </div>
         ) : error ? (
@@ -134,18 +147,16 @@ function CarouselRow({
         ) : (
           <div
             ref={scrollerRef}
-            className="flex gap-3 overflow-x-auto pb-2 scroll-smooth"
+            className="flex gap-3.5 overflow-x-auto pb-2 scroll-smooth"
             role="list"
             aria-label={title}
           >
             {items.map((s) => (
-              <Link
-                key={s.tmdbId}
-                href={`/show/${s.tmdbId}`}
-                className="focus:outline-none"
-              >
+              <Link key={s.tmdbId} href={`/show/${s.tmdbId}`} className="focus:outline-none">
                 <Card
-                  className="group w-[140px] sm:w-[160px] shrink-0 overflow-hidden border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition"
+                  className={
+                    `group ${cardW} shrink-0 overflow-hidden border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-0`
+                  }
                   role="listitem"
                 >
                   <div className="aspect-[2/3] w-full bg-white/5">
@@ -158,27 +169,24 @@ function CarouselRow({
                         loading="lazy"
                       />
                     ) : (
-                      <div className="h-full w-full flex items-center justify-center text-xs text-white/40">
-                        No poster
-                      </div>
+                      <div className="h-full w-full flex items-center justify-center text-xs text-white/40">No poster</div>
                     )}
                   </div>
 
-                  <CardContent className="p-3 h-[78px] flex flex-col">
-                    <div className="font-medium text-sm text-white line-clamp-2 leading-snug min-h-[36px]">
+                  {/* Uniform meta area. Title is clamped but never visually cut mid-line. */}
+                  <CardContent className={`p-3 ${metaH} flex flex-col`}>
+                    <div className="text-sm font-medium text-white leading-snug line-clamp-2">
                       {s.title}
                     </div>
-                    <div className="mt-2 text-xs text-white/50 leading-none h-[14px]">
-                      {s.year ?? ""}
-                    </div>
+                    <div className="mt-auto text-xs text-white/50 leading-none">{s.year ?? ""}</div>
                   </CardContent>
                 </Card>
               </Link>
             ))}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
 
@@ -347,47 +355,91 @@ export default function HomeClient() {
   }, []);
 
   return (
-    <div className="space-y-6">
-      {/* Top discovery */}
-      <div className="space-y-4">
-        <CarouselRow
-          title="Recommended for you"
-          subtitle="Based on your top genres."
-          items={recs}
-          loading={loadingRecs}
-          error={errorRecs}
-          emptyMessage="Rank more shows to unlock recommendations."
-        />
+    <div className="mx-auto w-full max-w-6xl space-y-8">
+      {/* Compact header strip */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <div className="text-sm text-white/70">Welcome back</div>
+          <div className="text-xl sm:text-2xl font-semibold text-white">Discover something new today.</div>
+        </div>
 
-        <CarouselRow
-          title="Trending this week"
-          subtitle="What people are watching right now."
-          items={trending}
-          loading={loadingTrending}
-          error={errorTrending}
-          emptyMessage="Nothing trending right now."
-        />
-
-        <CarouselRow
-          title="Popular"
-          subtitle="Big mainstream shows."
-          items={popular}
-          loading={loadingPopular}
-          error={errorPopular}
-          emptyMessage="Nothing popular right now."
-        />
+        <div className="flex gap-2">
+          <Button asChild className="rounded-xl">
+            <Link href="/rank">Log a show</Link>
+          </Button>
+          <Button
+            asChild
+            variant="secondary"
+            className="rounded-xl bg-white/5 border border-white/10 text-white/80 hover:bg-white/10"
+          >
+            <Link href="/my-list">My List</Link>
+          </Button>
+        </div>
       </div>
 
-      {/* Feed under discovery */}
-      <Card className="border-white/10 bg-white/[0.02]">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base sm:text-lg">Friends feed</CardTitle>
-          <p className="text-sm text-white/60">What your friends are ranking.</p>
-        </CardHeader>
-        <CardContent className="pt-0">
+      {/* For You (primary) */}
+      <CarouselRow
+        title="For you"
+        subtitle="Recommendations based on your top genres."
+        items={recs}
+        loading={loadingRecs}
+        error={errorRecs}
+        emptyMessage="Rank more shows to unlock recommendations."
+        tone="primary"
+        size="lg"
+      />
+
+      {/* Discovery (lighter weight, no heavy containers) */}
+      <div className="space-y-8">
+        <div className="space-y-3">
+          <CarouselRow
+            title="Trending"
+            subtitle="This week on TV."
+            items={trending}
+            loading={loadingTrending}
+            error={errorTrending}
+            emptyMessage="Nothing trending right now."
+            size="sm"
+          />
+        </div>
+
+        <div className="space-y-3">
+          <CarouselRow
+            title="Popular"
+            subtitle="What most people are watching."
+            items={popular}
+            loading={loadingPopular}
+            error={errorPopular}
+            emptyMessage="Nothing popular right now."
+            size="sm"
+          />
+        </div>
+      </div>
+
+      {/* Friends activity (lightweight, breathable) */}
+      <section className="space-y-3">
+        <div className="flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-base sm:text-lg font-semibold text-white">Friends activity</div>
+            <div className="mt-1 text-sm text-white/60">What your friends are ranking.</div>
+          </div>
+
+          <Button
+            asChild
+            variant="secondary"
+            className="h-9 px-3 rounded-xl bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 shrink-0"
+          >
+            <Link href="/friends">Friends</Link>
+          </Button>
+        </div>
+
+        <div className="h-px w-full bg-white/10" />
+
+        {/* Cap height so Home doesn't become an infinite scroll */}
+        <div className="max-h-[520px] overflow-auto pr-1">
           <FeedClient />
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   );
 }
