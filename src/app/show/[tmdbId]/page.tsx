@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getRankedShows, getState } from "@/core/logic/state";
+import { getRankedShows, getState, removeShowByTmdbId } from "@/core/logic/state";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Bookmark, Trash2 } from "lucide-react";
@@ -14,6 +14,17 @@ function notifyStateChanged() {
   window.dispatchEvent(new Event("bingebuddy:state-changed"));
 }
 
+function removeFromLocalRankedByTmdbId(tmdbId: number) {
+  if (typeof window === "undefined") return;
+  try {
+    // ✅ Use the core helper so state + derived ratings stay consistent
+    removeShowByTmdbId(tmdbId);
+    notifyStateChanged();
+  } catch {
+    // ignore (best-effort)
+  }
+}
+
 function imgUrl(
   path: string | null | undefined,
   size: "w154" | "w342" | "w500" = "w342"
@@ -23,9 +34,10 @@ function imgUrl(
 }
 
 function ratingBadgeClass(rating: number): string {
-  // Only text + border colored (matches your list UI)
-  if (rating >= 7) return "border-green-400/40 text-green-300";
-  if (rating >= 4) return "border-yellow-400/40 text-yellow-300";
+  const r = Number(rating);
+  if (!Number.isFinite(r)) return "border-white/15 text-white/80";
+  if (r >= 7) return "border-green-400/40 text-green-300";
+  if (r >= 4) return "border-yellow-400/40 text-yellow-300";
   return "border-red-400/40 text-red-300";
 }
 
@@ -56,6 +68,8 @@ export default function ShowDetailsPage() {
   const [isInWantToWatch, setIsInWantToWatch] = useState(false);
   const [isRankedInDb, setIsRankedInDb] = useState(false);
   const [listMessage, setListMessage] = useState<string | null>(null);
+  // Used to force a re-render when we mutate the local ranking state (core logic stores state outside React).
+  const [localStateBump, setLocalStateBump] = useState(0);
 
   const rankedMatch = useMemo(() => {
     if (!Number.isFinite(tmdbId)) return null;
@@ -63,7 +77,7 @@ export default function ShowDetailsPage() {
     const idx = ranked.findIndex((s) => s.tmdbId === tmdbId);
     if (idx === -1) return null;
     return { show: ranked[idx], rank: idx + 1 };
-  }, [tmdbId]);
+  }, [tmdbId, localStateBump]);
 
   async function requireUserId(): Promise<string | null> {
     const { data } = await supabase.auth.getSession();
@@ -155,8 +169,8 @@ export default function ShowDetailsPage() {
     const userId = await requireUserId();
     if (!userId) return;
 
-    // Deep-link into the existing rank flow. (We are NOT changing ranking logic.)
-    router.push(`/log?tmdbId=${tmdbId}&auto=1`);
+    // NOTE: Ranking flow lives at /rank (LogExperience). Keep deep-link params the same.
+    router.push(`/rank?tmdbId=${tmdbId}&auto=1`);
   }
 
   async function onClickWantToWatch() {
@@ -251,6 +265,7 @@ export default function ShowDetailsPage() {
       }
 
       await refreshListStatus(tmdbId);
+      setLocalStateBump((v) => v + 1);
       notifyStateChanged();
       router.refresh();
       setListMessage("Removed from Want to Watch.");
@@ -286,7 +301,7 @@ export default function ShowDetailsPage() {
       }
 
       // 2) Delete related activity events so it disappears from the feed
-      // (We only delete events created by this user for this tmdbId.)
+      // (Only delete events created by this user for this tmdbId.)
       const delEvents = await supabase
         .from("activity_events")
         .delete()
@@ -294,10 +309,44 @@ export default function ShowDetailsPage() {
         .eq("tmdb_id", tmdbId);
 
       // If RLS blocks event deletion, we still consider the unrank successful.
-      if (delEvents.error) {
-        // Keep it quiet, but you can surface this later if you want.
-        // setListMessage("Unranked, but couldn't remove activity from feed.");
+      // (We keep it quiet for now.)
+      void delEvents;
+
+      // 3) Optional cleanup: if the show is not in Want to Watch either,
+      // remove the metadata row from `shows` for this user.
+      // (We store metadata in `shows` so other pages can render reliably,
+      // but if it's no longer referenced anywhere, we can delete it.)
+      const wtwCheck = await supabase
+        .from("want_to_watch")
+        .select("tmdb_id", { head: true, count: "exact" })
+        .eq("user_id", userId)
+        .eq("tmdb_id", tmdbId);
+
+      const stillInWtw = !wtwCheck.error && (wtwCheck.count ?? 0) > 0;
+
+      if (!stillInWtw) {
+        // Also confirm it isn't still ranked (shouldn't be, but keep safe)
+        const rankedCheck = await supabase
+          .from("ranked_shows")
+          .select("tmdb_id", { head: true, count: "exact" })
+          .eq("user_id", userId)
+          .eq("tmdb_id", tmdbId);
+
+        const stillRanked = !rankedCheck.error && (rankedCheck.count ?? 0) > 0;
+
+        if (!stillRanked) {
+          await supabase
+            .from("shows")
+            .delete()
+            .eq("user_id", userId)
+            .eq("tmdb_id", tmdbId);
+        }
       }
+
+      // IMPORTANT: also remove it from the local ranked state immediately.
+      // Otherwise the ranking flow can still think it exists until another page pulls from Supabase.
+      removeFromLocalRankedByTmdbId(tmdbId);
+      setLocalStateBump((v) => v + 1);
 
       await refreshListStatus(tmdbId);
       notifyStateChanged();
@@ -437,7 +486,9 @@ export default function ShowDetailsPage() {
                       aria-label={`Rating ${rankedMatch.show.rating}`}
                       title={`Rating ${rankedMatch.show.rating}`}
                     >
-                      {Number(rankedMatch.show.rating).toFixed(1)}
+                      {Number.isFinite(Number(rankedMatch.show.rating))
+                        ? Number(rankedMatch.show.rating).toFixed(1)
+                        : "—"}
                     </div>
                   ) : null}
                 </div>
