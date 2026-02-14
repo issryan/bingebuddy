@@ -5,9 +5,14 @@ import { useParams, useRouter } from "next/navigation";
 import { getRankedShows, getState } from "@/core/logic/state";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
-import { Bookmark } from "lucide-react";
+import { Bookmark, Trash2 } from "lucide-react";
 
 const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
+
+function notifyStateChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event("bingebuddy:state-changed"));
+}
 
 function imgUrl(
   path: string | null | undefined,
@@ -220,6 +225,89 @@ export default function ShowDetailsPage() {
     }
   }
 
+  async function onClickRemoveWantToWatch() {
+    setListMessage(null);
+
+    const userId = await requireUserId();
+    if (!userId) return;
+
+    if (!Number.isFinite(tmdbId)) {
+      setListMessage("Invalid show id.");
+      return;
+    }
+
+    try {
+      setCheckingLists(true);
+
+      const del = await supabase
+        .from("want_to_watch")
+        .delete()
+        .eq("user_id", userId)
+        .eq("tmdb_id", tmdbId);
+
+      if (del.error) {
+        setListMessage(del.error.message);
+        return;
+      }
+
+      await refreshListStatus(tmdbId);
+      notifyStateChanged();
+      router.refresh();
+      setListMessage("Removed from Want to Watch.");
+    } finally {
+      setCheckingLists(false);
+    }
+  }
+
+  async function onClickUnrank() {
+    setListMessage(null);
+
+    const userId = await requireUserId();
+    if (!userId) return;
+
+    if (!Number.isFinite(tmdbId)) {
+      setListMessage("Invalid show id.");
+      return;
+    }
+
+    try {
+      setCheckingLists(true);
+
+      // 1) Delete the ranked row
+      const delRanked = await supabase
+        .from("ranked_shows")
+        .delete()
+        .eq("user_id", userId)
+        .eq("tmdb_id", tmdbId);
+
+      if (delRanked.error) {
+        setListMessage(delRanked.error.message);
+        return;
+      }
+
+      // 2) Delete related activity events so it disappears from the feed
+      // (We only delete events created by this user for this tmdbId.)
+      const delEvents = await supabase
+        .from("activity_events")
+        .delete()
+        .eq("actor_user_id", userId)
+        .eq("tmdb_id", tmdbId);
+
+      // If RLS blocks event deletion, we still consider the unrank successful.
+      if (delEvents.error) {
+        // Keep it quiet, but you can surface this later if you want.
+        // setListMessage("Unranked, but couldn't remove activity from feed.");
+      }
+
+      await refreshListStatus(tmdbId);
+      notifyStateChanged();
+      router.refresh();
+      setListMessage("Removed from your ranked list.");
+    } finally {
+      setCheckingLists(false);
+    }
+  }
+
   const poster = imgUrl(details?.posterPath, "w342");
   const heroImg = imgUrl(details?.posterPath, "w500");
 
@@ -252,31 +340,49 @@ export default function ShowDetailsPage() {
           </Button>
 
           <div className="flex items-center gap-2">
-            {!rankedMatch ? (
-              <Button onClick={onClickRank} className="rounded-2xl">
+            {isRankedInDb ? (
+              <Button
+                type="button"
+                onClick={onClickUnrank}
+                disabled={checkingLists}
+                variant="destructive"
+                className="rounded-2xl"
+                title="Remove from ranked"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span className="ml-2 hidden sm:inline">Unrank</span>
+              </Button>
+            ) : (
+              <Button onClick={onClickRank} className="rounded-2xl" disabled={checkingLists}>
                 Rank
               </Button>
-            ) : null}
+            )}
 
-            <Button
-              type="button"
-              onClick={onClickWantToWatch}
-              disabled={checkingLists || isInWantToWatch || !!rankedMatch || isRankedInDb}
-              variant={isInWantToWatch || rankedMatch || isRankedInDb ? "secondary" : "outline"}
-              title={
-                rankedMatch || isRankedInDb
-                  ? "Already ranked"
-                  : isInWantToWatch
-                  ? "Already in Want to Watch"
-                  : "Add to Want to Watch"
-              }
-              className={(isInWantToWatch || rankedMatch || isRankedInDb ? "opacity-60 " : "") + "rounded-2xl"}
-            >
-              <Bookmark className="h-4 w-4" />
-              <span className="ml-2 hidden sm:inline">
-                {isInWantToWatch ? "Saved" : "Want to Watch"}
-              </span>
-            </Button>
+            {isInWantToWatch ? (
+              <Button
+                type="button"
+                onClick={onClickRemoveWantToWatch}
+                disabled={checkingLists}
+                variant="secondary"
+                className="rounded-2xl"
+                title="Remove from Want to Watch"
+              >
+                <Bookmark className="h-4 w-4" />
+                <span className="ml-2 hidden sm:inline">Saved</span>
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={onClickWantToWatch}
+                disabled={checkingLists || isRankedInDb}
+                variant={isRankedInDb ? "secondary" : "outline"}
+                title={isRankedInDb ? "Already ranked" : "Add to Want to Watch"}
+                className={(isRankedInDb ? "opacity-60 " : "") + "rounded-2xl"}
+              >
+                <Bookmark className="h-4 w-4" />
+                <span className="ml-2 hidden sm:inline">Want to Watch</span>
+              </Button>
+            )}
           </div>
         </div>
 
@@ -338,9 +444,9 @@ export default function ShowDetailsPage() {
 
                 {/* Status + quick info */}
                 <div className="flex flex-wrap items-center gap-2">
-                  {rankedMatch ? (
+                  {isRankedInDb || rankedMatch ? (
                     <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/80">
-                      Ranked #{rankedMatch.rank}
+                      {rankedMatch ? `Ranked #${rankedMatch.rank}` : "Ranked"}
                     </span>
                   ) : isInWantToWatch ? (
                     <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/80">

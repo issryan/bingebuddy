@@ -277,6 +277,52 @@ export async function saveToBackend(
       }
     }
 
+    // 4) Cleanup: keep Supabase consistent when users remove/unrank items.
+    // `shows` is a per-user metadata cache. We prune rows that are no longer referenced
+    // by either Ranked or Want-to-Watch.
+    // We also prune the user's own rank_completed activity events for removed items.
+
+    const keepTmdbIds = Array.from(
+      new Set<number>([
+        ...rankedWithTmdb
+          .map((s: any) => (typeof s.tmdbId === "number" ? s.tmdbId : Number(s.tmdbId)))
+          .filter((n: number) => Number.isFinite(n)),
+        ...wtwWithTmdb
+          .map((s: any) => (typeof s.tmdbId === "number" ? s.tmdbId : Number(s.tmdbId)))
+          .filter((n: number) => Number.isFinite(n)),
+      ])
+    );
+
+    if (keepTmdbIds.length === 0) {
+      // User has no ranked + no want-to-watch -> remove all cached metadata + their rank_completed events
+      const delShowsAll = await supabase.from("shows").delete().eq("user_id", userId);
+      if (delShowsAll.error) return { ok: false, error: delShowsAll.error.message };
+
+      const delEventsAll = await supabase
+        .from("activity_events")
+        .delete()
+        .eq("actor_user_id", userId)
+        .eq("event_type", "rank_completed");
+      if (delEventsAll.error) return { ok: false, error: delEventsAll.error.message };
+    } else {
+      // Remove cached show metadata not referenced anymore
+      const delShowsStale = await supabase
+        .from("shows")
+        .delete()
+        .eq("user_id", userId)
+        .not("tmdb_id", "in", `(${keepTmdbIds.join(",")})`);
+      if (delShowsStale.error) return { ok: false, error: delShowsStale.error.message };
+
+      // Remove this user's rank_completed events for shows that are no longer in ranked or want-to-watch
+      const delEventsStale = await supabase
+        .from("activity_events")
+        .delete()
+        .eq("actor_user_id", userId)
+        .eq("event_type", "rank_completed")
+        .not("tmdb_id", "in", `(${keepTmdbIds.join(",")})`);
+      if (delEventsStale.error) return { ok: false, error: delEventsStale.error.message };
+    }
+
     return { ok: true, data: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };

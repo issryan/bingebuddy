@@ -95,6 +95,7 @@ function normalizeWantToWatch(items: unknown): NormalizedWantToWatchItem[] {
 }
 
 export default function ProfileClient() {
+  const [hydrated, setHydrated] = useState(false);
   const [rankedCount, setRankedCount] = useState(0);
   const [wantToWatchCount, setWantToWatchCount] = useState(0);
 
@@ -200,6 +201,7 @@ export default function ProfileClient() {
     let cancelled = false;
 
     async function run() {
+      setHydrated(false);
       const sessionRes = await supabase.auth.getSession();
       const user = sessionRes.data.session?.user ?? null;
 
@@ -275,6 +277,7 @@ export default function ProfileClient() {
 
       if (!user) {
         recomputeStatsFromLocal();
+        if (!cancelled) setHydrated(true);
         return;
       }
 
@@ -316,6 +319,7 @@ export default function ProfileClient() {
       }
 
       recomputeStatsFromLocal();
+      if (!cancelled) setHydrated(true);
     }
 
     void run();
@@ -476,7 +480,7 @@ export default function ProfileClient() {
             href="/friends"
             className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center hover:bg-white/[0.06] transition"
           >
-            <div className="text-2xl font-semibold">{friendsCount}</div>
+            <div className="text-2xl font-semibold">{hydrated ? friendsCount : "—"}</div>
             <div className="mt-1 text-xs text-white/50">Friends</div>
           </Link>
 
@@ -484,7 +488,7 @@ export default function ProfileClient() {
             href="/my-list"
             className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center hover:bg-white/[0.06] transition"
           >
-            <div className="text-2xl font-semibold">{rankedCount}</div>
+            <div className="text-2xl font-semibold">{hydrated ? rankedCount : "—"}</div>
             <div className="mt-1 text-xs text-white/50">Ranked</div>
           </Link>
 
@@ -492,7 +496,7 @@ export default function ProfileClient() {
             href="/my-list?tab=watch"
             className="rounded-2xl border border-white/10 bg-black/40 p-4 text-center hover:bg-white/[0.06] transition"
           >
-            <div className="text-2xl font-semibold">{wantToWatchCount}</div>
+            <div className="text-2xl font-semibold">{hydrated ? wantToWatchCount : "—"}</div>
             <div className="mt-1 text-xs text-white/50">Want to watch</div>
           </Link>
         </div>
@@ -516,7 +520,9 @@ export default function ProfileClient() {
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
           <div className="text-white/70 text-sm">Days since first log</div>
-          <div className="mt-1 text-3xl font-semibold">{daysSinceFirst === null ? "—" : daysSinceFirst}</div>
+          <div className="mt-1 text-3xl font-semibold">
+            {!hydrated ? "—" : daysSinceFirst === null ? "—" : daysSinceFirst}
+          </div>
         </div>
 
         <div className="rounded-2xl border border-white/15 bg-white/[0.03] p-5">
@@ -524,7 +530,9 @@ export default function ProfileClient() {
 
           <div className="mt-2 flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-lg font-semibold truncate">{topShow ? topShow.title : "—"}</div>
+              <div className="text-lg font-semibold truncate">
+                {!hydrated ? "—" : topShow ? topShow.title : "—"}
+              </div>
               <div className="mt-1 text-xs text-white/50">Highest-rated right now</div>
             </div>
 
@@ -545,7 +553,9 @@ export default function ProfileClient() {
 
           <div className="mt-2 flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-lg font-semibold truncate">{bottomShow ? bottomShow.title : "—"}</div>
+              <div className="text-lg font-semibold truncate">
+                {!hydrated ? "—" : bottomShow ? bottomShow.title : "—"}
+              </div>
               <div className="mt-1 text-xs text-white/50">Lowest-rated right now</div>
             </div>
 
@@ -569,7 +579,9 @@ export default function ProfileClient() {
           <div className="text-xs text-white/40">Based on ranked shows</div>
         </div>
 
-        {topGenres.length === 0 ? (
+        {!hydrated ? (
+          <div className="mt-3 text-sm text-white/50">—</div>
+        ) : topGenres.length === 0 ? (
           <div className="mt-3 text-sm text-white/50">—</div>
         ) : (
           <ol className="mt-4 space-y-2">
@@ -590,7 +602,7 @@ export default function ProfileClient() {
           <div className="text-xs text-white/40">Latest ranks</div>
         </div>
 
-        {myEventsLoading ? (
+        {!hydrated || myEventsLoading ? (
           <div className="mt-4 text-sm text-white/60">Loading…</div>
         ) : myEventsError ? (
           <div className="mt-4 text-sm text-red-300">{myEventsError}</div>
